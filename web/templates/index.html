@@ -518,7 +518,7 @@
     </section>
 
     <section>
-      <h2>Market Conditions</h2>
+      <h2>Market Conditions <span id="signals-ts" style="font-size:12px;color:var(--muted);font-weight:400"></span></h2>
       <div class="signals-grid" id="signals-grid">
         <div class="signal-card"><div class="commentary">Loading…</div></div>
       </div>
@@ -682,7 +682,7 @@
     </section>
 
     <section>
-      <h2>Market Conditions</h2>
+      <h2>Market Conditions <span id="f-signals-ts" style="font-size:12px;color:var(--muted);font-weight:400"></span></h2>
       <div class="signals-grid" id="f-signals-grid">
         <div class="signal-card"><div class="commentary">Loading…</div></div>
       </div>
@@ -867,7 +867,7 @@
     </section>
 
     <section>
-      <h2>Market Conditions</h2>
+      <h2>Market Conditions <span id="sh-signals-ts" style="font-size:12px;color:var(--muted);font-weight:400"></span></h2>
       <div class="signals-grid" id="sh-signals-grid">
         <div class="signal-card"><div class="commentary">Loading…</div></div>
       </div>
@@ -1023,7 +1023,7 @@
     </section>
 
     <section>
-      <h2>Market Conditions</h2>
+      <h2>Market Conditions <span id="fsh-signals-ts" style="font-size:12px;color:var(--muted);font-weight:400"></span></h2>
       <div class="signals-grid" id="fsh-signals-grid">
         <div class="signal-card"><div class="commentary">Loading…</div></div>
       </div>
@@ -1495,6 +1495,8 @@
       const res = await fetch('/api/signals');
       const signals = await res.json();
       const grid = document.getElementById('signals-grid');
+      const _sTs = document.getElementById('signals-ts');
+      if (_sTs) _sTs.textContent = 'updated @ ' + new Date().toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Helsinki'});
       grid.innerHTML = Object.entries(signals).map(([pair, d]) => {
         if (d.error) return `<div class="signal-card"><div class="pair-name">${pair}</div><div class="commentary" style="color:var(--red)">${escHtml(d.error)}</div></div>`;
 
@@ -2434,6 +2436,9 @@
         loadShChart();
       }
 
+      const _shTs = document.getElementById('sh-signals-ts');
+      if (_shTs) _shTs.textContent = 'updated @ ' + new Date().toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Helsinki'});
+
       grid.innerHTML = pairs.map(pair => {
         const d = _shSignals[pair];
         if (d.error) return `<div class="signal-card"><div class="pair-name">${pair}</div><div class="commentary" style="color:var(--red)">${escHtml(d.error)}</div></div>`;
@@ -2712,6 +2717,7 @@
       if (_shCandleChart) {
         _shCandleChart.data.labels  = data.labels;
         _shCandleChart.data._ohlc   = data.ohlc;
+        _shCandleChart.data.datasets[0].data = data.ohlc.map(d => d.c);
         _shCandleChart.options.scales.y.min = ohlcMin - ohlcPad;
         _shCandleChart.options.scales.y.max = ohlcMax + ohlcPad;
         _shCandleChart.update('none');
@@ -2719,12 +2725,12 @@
         const ctx2 = document.getElementById('sh-candle-chart').getContext('2d');
         _shCandleChart = new Chart(ctx2, {
           type: 'line',
-          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [] },
+          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [{ data: data.ohlc.map(d => d.c), borderColor: 'transparent', pointRadius: 0, borderWidth: 0, fill: false }] },
           options: {
             ...CHART_OPTS,
             plugins: { ...CHART_OPTS.plugins,
               legend: { display: false },
-              tooltip: { enabled: false },
+              tooltip: { enabled: false, external: _ohlcExternalTooltip },
             },
             scales: {
               x: CHART_OPTS.scales.x,
@@ -2807,8 +2813,56 @@
         ctx.strokeRect(px - barW / 2, top, barW, bH);
       });
       ctx.restore();
+    },
+    afterDraw(chart) {
+      const active = chart.tooltip?._active;
+      if (!active?.length) return;
+      const { ctx, chartArea: { top, bottom } } = chart;
+      const x = chart.scales.x.getPixelForValue(active[0].index);
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = '#8b949e55';
+      ctx.lineWidth = 1;
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.restore();
     }
   });
+
+  function _ohlcExternalTooltip(context) {
+    const { chart, tooltip } = context;
+    let el = chart.canvas.parentNode.querySelector('.ohlc-tip');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'ohlc-tip';
+      el.style.cssText = 'position:absolute;pointer-events:none;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:5px 8px;font-size:11px;color:#8b949e;white-space:nowrap;z-index:10;transition:opacity 0.1s';
+      chart.canvas.parentNode.style.position = 'relative';
+      chart.canvas.parentNode.appendChild(el);
+    }
+    if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
+    const idx = tooltip.dataPoints?.[0]?.dataIndex;
+    if (idx == null) { el.style.opacity = '0'; return; }
+    const d = chart.data._ohlc?.[idx];
+    if (!d) { el.style.opacity = '0'; return; }
+    const label = chart.data.labels?.[idx] || '';
+    const fmt = v => Number(v).toLocaleString('fi-FI', {minimumFractionDigits: 2});
+    const col = d.c >= d.o ? '#3fb950' : '#f85149';
+    el.innerHTML = `<span style="color:#e6edf3;font-weight:600">${label}</span>&ensp;`
+      + `O <span style="color:${col}">${fmt(d.o)}</span>&ensp;`
+      + `H <span style="color:#3fb950">${fmt(d.h)}</span>&ensp;`
+      + `L <span style="color:#f85149">${fmt(d.l)}</span>&ensp;`
+      + `C <span style="color:${col}">${fmt(d.c)}</span>`;
+    const { left, top, width } = chart.chartArea;
+    const cx = tooltip.caretX;
+    el.style.opacity = '1';
+    el.style.top = (top + 4) + 'px';
+    // flip to left side if near right edge
+    requestAnimationFrame(() => {
+      const tipW = el.offsetWidth;
+      el.style.left = (cx + tipW + 12 > left + width ? cx - tipW - 8 : cx + 8) + 'px';
+    });
+  }
 
   // ── chart ──────────────────────────────────────────────────────────────────
   let _chartPair    = null;
@@ -2935,6 +2989,7 @@
       if (_candleChart) {
         _candleChart.data.labels    = data.labels;
         _candleChart.data._ohlc     = data.ohlc;
+        _candleChart.data.datasets[0].data = data.ohlc.map(d => d.c);
         _candleChart.options.scales.y.min = ohlcMin - ohlcPad;
         _candleChart.options.scales.y.max = ohlcMax + ohlcPad;
         _candleChart.update('none');
@@ -2942,12 +2997,12 @@
         const ctx3 = document.getElementById('candle-chart').getContext('2d');
         _candleChart = new Chart(ctx3, {
           type: 'line',
-          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [] },
+          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [{ data: data.ohlc.map(d => d.c), borderColor: 'transparent', pointRadius: 0, borderWidth: 0, fill: false }] },
           options: {
             ...CHART_OPTS,
             plugins: { ...CHART_OPTS.plugins,
               legend: { display: false },
-              tooltip: { enabled: false },
+              tooltip: { enabled: false, external: _ohlcExternalTooltip },
             },
             scales: {
               x: CHART_OPTS.scales.x,
@@ -3188,6 +3243,8 @@
       const res     = await fetch('/api/futures/signals');
       const signals = await res.json();
       const grid    = document.getElementById('f-signals-grid');
+      const _fTs = document.getElementById('f-signals-ts');
+      if (_fTs) _fTs.textContent = 'updated @ ' + new Date().toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Helsinki'});
       grid.innerHTML = Object.entries(signals).map(([sym, d]) => {
         if (d.error) return `<div class="signal-card"><div class="pair-name">${sym}</div><div class="commentary" style="color:var(--red)">${escHtml(d.error)}</div></div>`;
 
@@ -3691,6 +3748,7 @@
       if (_fCandleChart) {
         _fCandleChart.data.labels    = data.labels;
         _fCandleChart.data._ohlc     = data.ohlc;
+        _fCandleChart.data.datasets[0].data = data.ohlc.map(d => d.c);
         _fCandleChart.options.scales.y.min = ohlcMin - ohlcPad;
         _fCandleChart.options.scales.y.max = ohlcMax + ohlcPad;
         _fCandleChart.update('none');
@@ -3698,10 +3756,10 @@
         const ctx2 = document.getElementById('f-candle-chart').getContext('2d');
         _fCandleChart = new Chart(ctx2, {
           type: 'line',
-          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [] },
+          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [{ data: data.ohlc.map(d => d.c), borderColor: 'transparent', pointRadius: 0, borderWidth: 0, fill: false }] },
           options: {
             ...CHART_OPTS,
-            plugins: { ...CHART_OPTS.plugins, legend: { display: false }, tooltip: { enabled: false } },
+            plugins: { ...CHART_OPTS.plugins, legend: { display: false }, tooltip: { enabled: false, external: _ohlcExternalTooltip } },
             scales: {
               x: CHART_OPTS.scales.x,
               y: { ...CHART_OPTS.scales.y,
@@ -3929,6 +3987,9 @@
         loadFShadowChart();
       }
 
+      const _fshTs = document.getElementById('fsh-signals-ts');
+      if (_fshTs) _fshTs.textContent = 'updated @ ' + new Date().toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Helsinki'});
+
       grid.innerHTML = syms.map(sym => {
         const d = _fshSignals[sym];
         if (d.error) return `<div class="signal-card"><div class="pair-name">${sym}</div><div class="commentary" style="color:var(--red)">${escHtml(d.error)}</div></div>`;
@@ -4104,6 +4165,7 @@
       if (_fshCandleChart) {
         _fshCandleChart.data.labels    = data.labels;
         _fshCandleChart.data._ohlc     = data.ohlc;
+        _fshCandleChart.data.datasets[0].data = data.ohlc.map(d => d.c);
         _fshCandleChart.options.scales.y.min = ohlcMin - ohlcPad;
         _fshCandleChart.options.scales.y.max = ohlcMax + ohlcPad;
         _fshCandleChart.update('none');
@@ -4111,10 +4173,10 @@
         const ctx2 = document.getElementById('fsh-candle-chart').getContext('2d');
         _fshCandleChart = new Chart(ctx2, {
           type: 'line',
-          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [] },
+          data: { labels: data.labels, _ohlc: data.ohlc, datasets: [{ data: data.ohlc.map(d => d.c), borderColor: 'transparent', pointRadius: 0, borderWidth: 0, fill: false }] },
           options: {
             ...CHART_OPTS,
-            plugins: { ...CHART_OPTS.plugins, legend: { display: false }, tooltip: { enabled: false } },
+            plugins: { ...CHART_OPTS.plugins, legend: { display: false }, tooltip: { enabled: false, external: _ohlcExternalTooltip } },
             scales: {
               x: CHART_OPTS.scales.x,
               y: { ...CHART_OPTS.scales.y,

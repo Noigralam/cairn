@@ -1647,7 +1647,12 @@ def api_futures_shadows():
                 prices[sym] = _gmp(sym)
             except Exception:
                 pass
-        open_pnl = sum(p.unrealized_pnl(prices[s]) for s, p in sh.positions.items() if s in prices)
+        def _upnl(p, price):
+            if isinstance(p, dict):
+                side = p.get("side", "LONG")
+                return (price - p["entry_price"]) * p["amount"] if side == "LONG" else (p["entry_price"] - price) * p["amount"]
+            return p.unrealized_pnl(price)
+        open_pnl = sum(_upnl(p, prices[s]) for s, p in sh.positions.items() if s in prices)
         return sh.balance + open_pnl
 
     main_portfolio = _portfolio(main_shim)
