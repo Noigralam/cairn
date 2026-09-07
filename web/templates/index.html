@@ -4939,6 +4939,7 @@ function _renderConfigTable(cfg, overrides) {
       html += _settingsRow('Re-entry drop', _pct(cfg.extra.reentry_drop_pct), true);
     if (cfg.extra.stop_cooldown_candles !== undefined)
       html += _settingsRow('Stop cooldown', cfg.extra.stop_cooldown_candles + ' candles', true);
+
   }
 
   html += '<tr><td colspan="2" style="padding:8px 0 4px;color:#58a6ff;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">General</td></tr>';
@@ -4954,15 +4955,25 @@ function _renderConfigTable(cfg, overrides) {
     html += _settingsRow('RSI overbought', p.rsi_overbought,'spot_rsi_overbought'in o);
     html += _settingsRow('EMA gap',        _pct(p.ema_gap_pct), 'spot_ema_gap_pct'   in o);
     html += '<tr><td colspan="2" style="padding:6px 0 3px;color:#30363d;font-size:11px">── DCA</td></tr>';
-    html += _settingsRow('First drop',  _pct(p.dca_drop_pct), 'spot_dca_drop_pct' in o);
-    html += _settingsRow('Max tranches',p.dca_max,            'spot_dca_max'  in o);
-    html += _settingsRow('Step',        _pct(p.dca_step_pct), false);
-    html += _settingsRow('Size/tranche',_pct(p.dca_size_pct), false);
+    html += _settingsRow('Position size', _pct(p.position_size_pct), 'spot_position_size_pct' in o);
+    html += _settingsRow('First drop',   _pct(p.dca_drop_pct),      'spot_dca_drop_pct'      in o);
+    html += _settingsRow('Max tranches', p.dca_max,                  'spot_dca_max'           in o);
+    html += _settingsRow('Step',         _pct(p.dca_step_pct),       'spot_dca_step_pct'      in o);
+    html += _settingsRow('Size/tranche', _pct(p.dca_size_pct),       'spot_dca_size_pct'      in o);
     html += '<tr><td colspan="2" style="padding:6px 0 3px;color:#30363d;font-size:11px">── Exit</td></tr>';
-    html += _settingsRow('Take profit',    _pct(p.take_profit_pct),   'spot_take_profit_pct'   in o);
-    html += _settingsRow('Trailing stop',  _pct(p.trailing_stop_pct), 'spot_trailing_stop_pct' in o);
-    html += _settingsRow('Profit floor',   _pct(p.profit_floor_pct),  'spot_profit_floor_pct'  in o);
-    html += _settingsRow('Min RSI exit',   _pct(p.min_exit_pct),      'spot_min_exit_profit_pct' in o);
+    html += _settingsRow('Take profit',         _pct(p.take_profit_pct),   'spot_take_profit_pct'        in o);
+    html += _settingsRow('Trailing stop',       _pct(p.trailing_stop_pct), 'spot_trailing_stop_pct'      in o);
+    html += _settingsRow('Profit floor',        _pct(p.profit_floor_pct),  'spot_profit_floor_pct'       in o);
+    html += _settingsRow('Min RSI exit',        _pct(p.min_exit_pct),      'spot_min_exit_profit_pct'    in o);
+    html += _settingsRow('Partial close',       p.partial_close_pct > 0 ? _pct(p.partial_close_pct) : 'off', 'spot_partial_close_pct' in o);
+    if (p.partial_close_pct > 0 || 'spot_partial_close_trail_pct' in o)
+      html += _settingsRow('↳ Trail after',     _pct(p.partial_close_trail_pct), 'spot_partial_close_trail_pct' in o);
+    html += _settingsRow('Time stop',           p.time_stop_days > 0 ? p.time_stop_days + 'd' : 'off', 'spot_time_stop_days' in o);
+    html += _settingsRow('Hard stop',           p.hard_stop_pct > 0 ? _pct(p.hard_stop_pct) : 'off',  'spot_hard_stop_pct'  in o);
+    html += '<tr><td colspan="2" style="padding:6px 0 3px;color:#30363d;font-size:11px">── Filters</td></tr>';
+    html += _settingsRow('Volume period', p.volume_filter_period > 0 ? p.volume_filter_period + ' bars' : 'off', 'spot_volume_filter_period' in o);
+    if (p.volume_filter_period > 0 || 'spot_volume_filter_mult' in o)
+      html += _settingsRow('↳ Multiplier', p.volume_filter_mult + '×', 'spot_volume_filter_mult' in o);
   });
   html += '</table>';
   if (overrides && Object.keys(ov).length)

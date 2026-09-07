@@ -156,11 +156,15 @@ Spot and futures are completely independent: separate balances, state files, and
 
 See `.env.example` for the full annotated list. Key settings:
 
+> **Defaults shown below match `.env.example`**, which is the recommended starting point. Bare code fallbacks (when a variable is absent from `.env` entirely) differ in some cases and should not be relied on.
+
 ### Spot
 
 | Variable | Default | Description |
 |---|---|---|
 | `SPOT_MODE` | `simulation` | `simulation` or `live` |
+| `SPOT_QUOTE_CURRENCY` | `EUR` | Quote currency suffix for spot pairs (EUR, GBP, USDT, USDC, BRL, TRY, AUD, BNB, …) — must match the suffix of every pair in `SPOT_TRADING_PAIRS` |
+| `SPOT_CURRENCY_SYMBOL` | auto | Display symbol override (auto-detected: EUR→€, GBP→£, USDT/USDC→$, …). Set explicitly if your currency isn't auto-recognised |
 | `SPOT_TRADING_PAIRS` | `ETHEUR,SOLEUR` | Comma-separated Binance spot pairs (any quote currency); first pair gets priority for DCA funds when multiple fire simultaneously |
 | `SPOT_INVESTED` | `0` | Total quote currency deposited; dashboard "from X" reference (0 = use first recorded balance) |
 | `SPOT_SIMULATION_BALANCE` | `200.0` | Starting balance for simulation (quote currency) |
@@ -181,7 +185,8 @@ See `.env.example` for the full annotated list. Key settings:
 | `SPOT_EMA_GAP_PCT` | `0` | Min % above EMA200 to allow a buy (0 = no gap filter) |
 | `SPOT_DAILY_EMA_FILTER` | `false` | Also require price > daily EMA200 |
 | `SPOT_TIME_STOP_DAYS` | `0` | Close stalled positions after N days (0 = off) |
-| `SPOT_MAX_DRAWDOWN_PCT` | `0.20` | Pause buys if portfolio drops >X% from peak |
+| `SPOT_HARD_STOP_PCT` | `0` | Close immediately if price drops X% below entry (0 = off). Unlike the trailing stop this fires at a fixed level below entry regardless of profit |
+| `SPOT_MAX_DRAWDOWN_PCT` | `0` | Pause buys if portfolio drops >X% from peak |
 | `SPOT_STOP_CHECK_INTERVAL` | `30` | Between-candle stop check frequency (seconds) |
 | `SPOT_STOP_COOLDOWN_CANDLES` | `0` | Block re-entry for N candles after a trailing stop fires |
 | `SPOT_REENTRY_DROP_PCT` | `0` | After a stop, require price to drop X% before re-entry (0 = off) |
@@ -192,7 +197,7 @@ See `.env.example` for the full annotated list. Key settings:
 
 **Per-pair overrides** — append the pair name (e.g. `_SOLEUR`) to any of these:
 
-`SPOT_RSI_PERIOD`, `SPOT_RSI_OVERSOLD`, `SPOT_RSI_OVERBOUGHT`, `SPOT_EMA_GAP_PCT`, `SPOT_MIN_EXIT_PROFIT_PCT`, `SPOT_TAKE_PROFIT_PCT`, `SPOT_TRAILING_STOP_PCT`, `SPOT_PROFIT_FLOOR_PCT`, `SPOT_DCA_MAX`, `SPOT_DCA_DROP_PCT`, `SPOT_DCA_STEP_PCT`, `SPOT_TIME_STOP_DAYS`, `SPOT_STOP_COOLDOWN_CANDLES`, `SPOT_REENTRY_DROP_PCT`, `SPOT_VOLUME_FILTER_PERIOD`, `SPOT_VOLUME_FILTER_MULT`, `SPOT_PARTIAL_CLOSE_PCT`, `SPOT_PARTIAL_CLOSE_TRAIL_PCT`
+`SPOT_RSI_PERIOD`, `SPOT_RSI_OVERSOLD`, `SPOT_RSI_OVERBOUGHT`, `SPOT_EMA_GAP_PCT`, `SPOT_MIN_EXIT_PROFIT_PCT`, `SPOT_TAKE_PROFIT_PCT`, `SPOT_TRAILING_STOP_PCT`, `SPOT_PROFIT_FLOOR_PCT`, `SPOT_DCA_MAX`, `SPOT_DCA_DROP_PCT`, `SPOT_DCA_STEP_PCT`, `SPOT_TIME_STOP_DAYS`, `SPOT_HARD_STOP_PCT`, `SPOT_STOP_COOLDOWN_CANDLES`, `SPOT_REENTRY_DROP_PCT`, `SPOT_VOLUME_FILTER_PERIOD`, `SPOT_VOLUME_FILTER_MULT`, `SPOT_PARTIAL_CLOSE_PCT`, `SPOT_PARTIAL_CLOSE_TRAIL_PCT`
 
 Current per-pair overrides in use:
 ```
@@ -237,11 +242,15 @@ Enable with `SPOT_SHADOW_PROFILES=PROFILE1,PROFILE2,...`. Each profile supports 
 | `DCA_MAX` / `DCA_DROP_PCT` / `DCA_STEP_PCT` / `DCA_SIZE_PCT` | DCA parameters |
 | `POSITION_SIZE_PCT` | Fraction of balance per trade |
 | `TIME_STOP_DAYS` | Time stop (0 = off) |
+| `HARD_STOP_PCT` | Hard stop loss below entry price (0 = off) |
 | `STOP_COOLDOWN_CANDLES` | Re-entry cooldown after trailing stop |
 | `REENTRY_DROP_PCT` | Re-entry price gate after a stop |
 | `PARTIAL_CLOSE_PCT` / `PARTIAL_CLOSE_TRAIL_PCT` | Partial close parameters |
 | `VOLUME_FILTER_PERIOD` / `VOLUME_FILTER_MULT` | Volume filter |
 | `TYPE=grid` | Grid strategy instead of RSI mean-reversion |
+| `GRID_SPACING` / `GRID_LEVELS` | Grid parameters (only used when `TYPE=grid`) |
+
+`SPOT_SHADOW_DEFAULT_BALANCE` sets the starting balance for any new shadow that has no existing state and no explicit `BALANCE` override (default: `200.0`).
 
 
 ### Futures
@@ -263,6 +272,8 @@ Enable with `SPOT_SHADOW_PROFILES=PROFILE1,PROFILE2,...`. Each profile supports 
 | `FUTURES_PROFIT_FLOOR_PCT` | `0.01` | Min profit before trailing stop fires |
 | `FUTURES_RSI_PERIOD` | `7` | RSI lookback |
 | `FUTURES_RSI_OVERSOLD` | `25` | Buy threshold |
+| `FUTURES_RSI_OVERBOUGHT` | `75` | Logged for reference; futures exits are handled by trailing stop, not RSI signal |
+| `FUTURES_MIN_EXIT_PROFIT_PCT` | `0.02` | Min profit before signal exit can fire |
 | `FUTURES_EMA_GAP_PCT` | `0.02` | Min % above EMA200 to allow entry |
 | `FUTURES_MAX_FUNDING_RATE` | `0.0005` | Skip entry when 8h funding rate exceeds this (0 = disabled) |
 | `FUTURES_MAX_DRAWDOWN_PCT` | `0` | Pause longs if portfolio drops >X% from peak |
@@ -270,7 +281,7 @@ Enable with `SPOT_SHADOW_PROFILES=PROFILE1,PROFILE2,...`. Each profile supports 
 
 Per-pair overrides: append the symbol, e.g. `FUTURES_RSI_PERIOD_ETHUSDT=7`.
 
-Futures shadows use `FUTURES_SHADOW_PROFILES` and `FUTURES_SHADOW_<NAME>_` prefixes.
+Futures shadows use `FUTURES_SHADOW_PROFILES` and `FUTURES_SHADOW_<NAME>_` prefixes. `FUTURES_SHADOW_DEFAULT_BALANCE` sets the starting balance for new futures shadows (default: `200.0`).
 
 ### Credentials & dashboard
 

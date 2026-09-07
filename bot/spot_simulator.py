@@ -828,12 +828,6 @@ class SpotShadowSimulator:
             if price > reentry_threshold:
                 return
             del self._reentry_drop_prices[pair]
-        fng_max = self._o("spot_fng_max", None)
-        if fng_max is not None:
-            from .notifier import get_fng
-            fng_val, _ = get_fng()
-            if fng_val is not None and fng_val > fng_max:
-                return
         tp_pct      = self._o("spot_take_profit_pct",  config.take_profit_for(pair))
         max_sz      = self.balance / (1 + SPOT_FEE)
         no_dca      = self._o("spot_dca_max", config.dca_max_for(pair)) == 0

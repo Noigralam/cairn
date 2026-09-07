@@ -208,10 +208,17 @@ def _spot_config_for_pair(pair: str) -> dict:
         "dca_max":       config.dca_max_for(pair),
         "dca_step_pct":  round(config.SPOT_DCA_STEP_PCT * 100, 2),
         "dca_size_pct":  round(config.SPOT_DCA_SIZE_PCT * 100, 2),
-        "take_profit_pct":   round(config.take_profit_for(pair) * 100, 2),
-        "trailing_stop_pct": round(config.trailing_stop_for(pair) * 100, 2),
-        "profit_floor_pct":  round(config.profit_floor_for(pair) * 100, 2),
-        "min_exit_pct":      round(config.min_exit_for(pair) * 100, 2),
+        "take_profit_pct":        round(config.take_profit_for(pair) * 100, 2),
+        "trailing_stop_pct":      round(config.trailing_stop_for(pair) * 100, 2),
+        "profit_floor_pct":       round(config.profit_floor_for(pair) * 100, 2),
+        "min_exit_pct":           round(config.min_exit_for(pair) * 100, 2),
+        "time_stop_days":         config.time_stop_for(pair),
+        "hard_stop_pct":          round(config.hard_stop_for(pair) * 100, 2),
+        "partial_close_pct":      round(config.partial_close_for(pair) * 100, 2),
+        "partial_close_trail_pct": round(config.partial_close_trail_for(pair) * 100, 2),
+        "volume_filter_period":   config.vol_period_for(pair),
+        "volume_filter_mult":     config.vol_mult_for(pair),
+        "position_size_pct":      round(config.SPOT_POSITION_SIZE_PCT * 100, 2),
     }
 
 
@@ -253,17 +260,25 @@ def api_shadow_config(name):
             "dca_max":           int(_ov("spot_dca_max",                     base["dca_max"])),
             "dca_step_pct":      round(float(_ov("spot_dca_step_pct",        base["dca_step_pct"] / 100)) * 100, 2),
             "dca_size_pct":      round(float(_ov("spot_dca_size_pct",        base["dca_size_pct"] / 100)) * 100, 2),
-            "take_profit_pct":   round(float(_ov("spot_take_profit_pct",     base["take_profit_pct"] / 100)) * 100, 2),
-            "trailing_stop_pct": round(float(_ov("spot_trailing_stop_pct",   base["trailing_stop_pct"] / 100)) * 100, 2),
-            "profit_floor_pct":  round(float(_ov("spot_profit_floor_pct",    base["profit_floor_pct"] / 100)) * 100, 2),
-            "min_exit_pct":      round(float(_ov("spot_min_exit_profit_pct", base["min_exit_pct"] / 100)) * 100, 2),
+            "take_profit_pct":        round(float(_ov("spot_take_profit_pct",          base["take_profit_pct"] / 100)) * 100, 2),
+            "trailing_stop_pct":      round(float(_ov("spot_trailing_stop_pct",        base["trailing_stop_pct"] / 100)) * 100, 2),
+            "profit_floor_pct":       round(float(_ov("spot_profit_floor_pct",         base["profit_floor_pct"] / 100)) * 100, 2),
+            "min_exit_pct":           round(float(_ov("spot_min_exit_profit_pct",      base["min_exit_pct"] / 100)) * 100, 2),
+            "time_stop_days":         float(_ov("spot_time_stop_days",                 base["time_stop_days"])),
+            "hard_stop_pct":          round(float(_ov("spot_hard_stop_pct",            base["hard_stop_pct"] / 100)) * 100, 2),
+            "partial_close_pct":      round(float(_ov("spot_partial_close_pct",        base["partial_close_pct"] / 100)) * 100, 2),
+            "partial_close_trail_pct": round(float(_ov("spot_partial_close_trail_pct", base["partial_close_trail_pct"] / 100)) * 100, 2),
+            "volume_filter_period":   int(_ov("spot_volume_filter_period",              base["volume_filter_period"])),
+            "volume_filter_mult":     round(float(_ov("spot_volume_filter_mult",        base["volume_filter_mult"])), 2),
+            "position_size_pct":      round(float(_ov("spot_position_size_pct",         base["position_size_pct"] / 100)) * 100, 2),
         }
 
     extra = {}
     if "spot_reentry_drop_pct" in ov:
         extra["reentry_drop_pct"] = round(float(ov["spot_reentry_drop_pct"]) * 100, 2)
     if "spot_stop_cooldown_candles" in ov:
-        extra["stop_cooldown_candles"] = int(ov["spot_stop_cooldown_candles"])  # key now matches config
+        extra["stop_cooldown_candles"] = int(ov["spot_stop_cooldown_candles"])
+
 
     return jsonify({
         "name":     s.name,

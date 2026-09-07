@@ -121,7 +121,7 @@ SPOT_SHADOW_SOL4H_DCA_MAX=0
 SPOT_SHADOW_SOL4H_EMA_GAP_PCT=0.0
 ```
 
-SOL4H_FNG, SOL4H_FNG_CD, and SOL4H_FNG_CDT were added on top of these settings to test fear & greed gating and re-entry cooldowns without re-doing the base param search.
+SOL4H_FNG, SOL4H_FNG_CD, and SOL4H_FNG_CDT were added on top of these settings to test re-entry cooldowns without re-doing the base param search. (The fear & greed gate those profiles used — `FNG_MAX` — has since been removed from the shadow override map; RSI already captures sentiment sufficiently.)
 
 ---
 

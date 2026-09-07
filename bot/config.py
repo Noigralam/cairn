@@ -195,7 +195,6 @@ def get_shadow_overrides(name: str) -> dict:
         "VOLUME_FILTER_PERIOD":    ("spot_volume_filter_period",  int),
         "VOLUME_FILTER_MULT":      ("spot_volume_filter_mult",    float),
         # ── Sentiment filter ──────────────────────────────────────
-        "FNG_MAX":                 ("spot_fng_max",             int),
         # ── Simulation / grid ─────────────────────────────────────
         "BALANCE":                 ("spot_balance",             float),
         "GRID_SPACING":            ("spot_grid_spacing",        float),
