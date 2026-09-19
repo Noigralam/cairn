@@ -74,7 +74,7 @@ def _maybe_apply_funding(symbol: str, price: float) -> None:
 
 
 def _loop():
-    global _running, _last_tick
+    global _running, _last_tick, _paused
 
     notify(
         f"[FUTURES] Engine started — mode={config.FUTURES_MODE}  "
