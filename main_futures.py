@@ -36,12 +36,15 @@ def setup_logging():
 if __name__ == "__main__":
     setup_logging()
     init_db()
-    from bot.spot_simulator import init as init_state
-    from bot.spot_engine import start as start_engine
-    from bot.discord_bot import start as start_discord
-    init_state()
-    start_engine()
-    start_discord()
+    from bot import config as _cfg
+    if not _cfg.FUTURES_ENABLED:
+        import sys
+        print("FUTURES_ENABLED is false — nothing to run.")
+        sys.exit(0)
+    from bot.futures_simulator import init as init_futures_state
+    from bot.futures_engine import start as start_futures
+    init_futures_state()
+    start_futures()
     # Keep the main thread alive — all engine threads are daemons
     while True:
         time.sleep(60)
