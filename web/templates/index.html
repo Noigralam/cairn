@@ -3168,10 +3168,17 @@
         tradeLines.push({idx, color, side: t.side});
       }
 
+      // Use 2nd-percentile as y-axis floor so brief dips to near-zero
+      // (e.g. engine restart with lost state) don't flatten the whole chart.
+      const sorted = [...values].sort((a, b) => a - b);
+      const p2 = sorted[Math.floor(sorted.length * 0.02)] ?? sorted[0];
+      const yMin = p2 * 0.98;
+
       if (_balanceChart) {
-        _balanceChart.data.labels           = labels;
-        _balanceChart.data.datasets[0].data = values;
-        _balanceChart._tradeLines           = tradeLines;
+        _balanceChart.data.labels                   = labels;
+        _balanceChart.data.datasets[0].data         = values;
+        _balanceChart._tradeLines                   = tradeLines;
+        _balanceChart.options.scales.y.min          = yMin;
         _balanceChart.update('none');
       } else {
         const ctx = document.getElementById('balance-chart').getContext('2d');
@@ -3200,7 +3207,7 @@
             },
             scales: {
               x: CHART_OPTS.scales.x,
-              y: { ...CHART_OPTS.scales.y,
+              y: { ...CHART_OPTS.scales.y, min: yMin,
                 ticks: { ...CHART_OPTS.scales.y.ticks, callback: v => Number(v).toLocaleString('fi-FI') + ' ' + CURRENCY_SYMBOL }
               },
             },
