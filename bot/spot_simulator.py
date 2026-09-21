@@ -600,24 +600,27 @@ def check_stops(prices: dict):
             updated = update_peak(pos, price)
             floor = 0.0 if pos.partial_closed else config.profit_floor_for(pair)
             trail = config.partial_close_trail_for(pair) if pos.partial_closed else config.trailing_stop_for(pair)
-            if check_hard_stop(pos, price, config.hard_stop_for(pair)):
-                close_position(pair, price, reason="hard_stop")
-            elif check_take_profit(pos, price) and not pos.partial_closed:
-                if config.partial_close_for(pair) > 0:
-                    partial_close_position(pair, price)
-                else:
-                    close_position(pair, price, reason="take_profit")
-            elif check_trailing_stop(pos, price, floor_pct=floor, trail_pct=trail):
-                close_position(pair, price, reason="trailing_stop")
-            elif (config.time_stop_for(pair) > 0
-                  and pos.opened_at > 0
-                  and (now - pos.opened_at) / 86400 > config.time_stop_for(pair)
-                  and pos.peak() <= pos.trailing_stop_level(floor_pct=floor, trail_pct=trail)):
-                age = (now - pos.opened_at) / 86400
-                notify(f"[TIME STOP] {pair} — position held {age:.0f}d without reaching profit floor, closing at {config.SPOT_CURRENCY_SYMBOL}{price:,.2f}")
-                close_position(pair, price, reason="time_stop")
-            elif updated:
-                _save()
+            try:
+                if check_hard_stop(pos, price, config.hard_stop_for(pair)):
+                    close_position(pair, price, reason="hard_stop")
+                elif check_take_profit(pos, price) and not pos.partial_closed:
+                    if config.partial_close_for(pair) > 0:
+                        partial_close_position(pair, price)
+                    else:
+                        close_position(pair, price, reason="take_profit")
+                elif check_trailing_stop(pos, price, floor_pct=floor, trail_pct=trail):
+                    close_position(pair, price, reason="trailing_stop")
+                elif (config.time_stop_for(pair) > 0
+                      and pos.opened_at > 0
+                      and (now - pos.opened_at) / 86400 > config.time_stop_for(pair)
+                      and pos.peak() <= pos.trailing_stop_level(floor_pct=floor, trail_pct=trail)):
+                    age = (now - pos.opened_at) / 86400
+                    notify(f"[TIME STOP] {pair} — position held {age:.0f}d without reaching profit floor, closing at {config.SPOT_CURRENCY_SYMBOL}{price:,.2f}")
+                    close_position(pair, price, reason="time_stop")
+                elif updated:
+                    _save()
+            except Exception as e:
+                log.warning(f"[STOP-CHECK] {pair} close failed, will retry next cycle: {e}")
 
         # Update portfolio peak for drawdown guard
         if config.SPOT_MAX_DRAWDOWN_PCT > 0:
