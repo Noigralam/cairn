@@ -51,6 +51,42 @@ def init_db():
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_candles_lookup ON candles (pair, interval, open_time)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS archived_shadow_snapshots (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT    NOT NULL,
+            db_mode          TEXT    NOT NULL,
+            archive_reason   TEXT    NOT NULL,
+            archived_at      TEXT    NOT NULL,
+            started_at       TEXT,
+            pairs            TEXT,
+            overrides        TEXT    NOT NULL,
+            starting_balance REAL    NOT NULL,
+            final_balance    REAL    NOT NULL,
+            total_trades     INTEGER NOT NULL,
+            total_pnl        REAL    NOT NULL,
+            total_fees       REAL    NOT NULL,
+            first_trade_at   TEXT,
+            last_trade_at    TEXT
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS archived_trades (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_id INTEGER NOT NULL REFERENCES archived_shadow_snapshots(id),
+            orig_id     INTEGER,
+            timestamp   TEXT    NOT NULL,
+            pair        TEXT    NOT NULL,
+            side        TEXT    NOT NULL,
+            price       REAL    NOT NULL,
+            amount      REAL    NOT NULL,
+            value_eur   REAL    NOT NULL,
+            fee         REAL    NOT NULL,
+            pnl         REAL,
+            notes       TEXT
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_arch_trades_snap ON archived_trades (snapshot_id)")
     conn.commit()
     conn.close()
 
@@ -256,3 +292,108 @@ def get_tax_summary(mode="live"):
     """, (mode,)).fetchall()
     conn.close()
     return rows
+
+
+def archive_shadow(name: str, db_mode: str, reason: str, state_data: dict, overrides: dict):
+    """Archive a shadow's trades + state snapshot, then wipe from live tables."""
+    import json as _json
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        archived_at = datetime.now(tz=_TZ).isoformat()
+        date_row = conn.execute(
+            "SELECT MIN(timestamp), MAX(timestamp) FROM trades WHERE mode = ?", (db_mode,)
+        ).fetchone()
+        first_trade_at = date_row[0] if date_row else None
+        last_trade_at  = date_row[1] if date_row else None
+        pairs = overrides.get("pairs") or state_data.get("overrides", {}).get("pairs")
+        cur = conn.execute("""
+            INSERT INTO archived_shadow_snapshots
+                (name, db_mode, archive_reason, archived_at, started_at, pairs, overrides,
+                 starting_balance, final_balance, total_trades, total_pnl, total_fees,
+                 first_trade_at, last_trade_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            name, db_mode, reason, archived_at,
+            state_data.get("started_at"),
+            _json.dumps(pairs) if pairs else None,
+            _json.dumps(overrides),
+            float(state_data.get("starting_balance", 0.0)),
+            float(state_data.get("balance", 0.0)),
+            int(state_data.get("total_trades", 0)),
+            float(state_data.get("total_pnl", 0.0)),
+            float(state_data.get("total_fees", 0.0)),
+            first_trade_at, last_trade_at,
+        ))
+        snapshot_id = cur.lastrowid
+        conn.execute("""
+            INSERT INTO archived_trades
+                (snapshot_id, orig_id, timestamp, pair, side, price, amount, value_eur, fee, pnl, notes)
+            SELECT ?, id, timestamp, pair, side, price, amount, value_eur, fee, pnl, notes
+            FROM trades WHERE mode = ?
+        """, (snapshot_id, db_mode))
+        conn.execute("DELETE FROM trades WHERE mode = ?", (db_mode,))
+        conn.execute("DELETE FROM balance_history WHERE mode = ?", (db_mode,))
+        conn.commit()
+        import logging
+        logging.getLogger("cryptobot").info(
+            f"[ARCHIVE] {name}: {state_data.get('total_trades', 0)} trades archived (reason={reason})"
+        )
+    except Exception as e:
+        conn.rollback()
+        import logging
+        logging.getLogger("cryptobot").error(f"[ARCHIVE] Failed to archive {name}: {e}")
+    finally:
+        conn.close()
+
+
+def get_archived_snapshots() -> list:
+    import json as _json
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM archived_shadow_snapshots ORDER BY archived_at DESC"
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["pairs"]     = _json.loads(d["pairs"])     if d["pairs"]     else []
+        d["overrides"] = _json.loads(d["overrides"]) if d["overrides"] else {}
+        result.append(d)
+    return result
+
+
+def get_archived_snapshot(snapshot_id: int):
+    import json as _json
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM archived_shadow_snapshots WHERE id = ?", (snapshot_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["pairs"]     = _json.loads(d["pairs"])     if d["pairs"]     else []
+    d["overrides"] = _json.loads(d["overrides"]) if d["overrides"] else {}
+    return d
+
+
+def get_archived_trades(snapshot_id: int, limit: int = 50, offset: int = 0) -> list:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT * FROM archived_trades WHERE snapshot_id = ?
+        ORDER BY timestamp ASC LIMIT ? OFFSET ?
+    """, (snapshot_id, limit, offset)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_archived_trade_count(snapshot_id: int) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM archived_trades WHERE snapshot_id = ?", (snapshot_id,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0

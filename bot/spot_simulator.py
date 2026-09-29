@@ -758,8 +758,15 @@ class SpotShadowSimulator:
 
     def reset(self):
         with self._lock:
-            from .db import clear_shadow_trades, log_balance
-            clear_shadow_trades(self._db_mode)
+            from .db import archive_shadow, log_balance
+            archive_shadow(self.name, self._db_mode, "manual_reset", {
+                "started_at":       self.started_at,
+                "starting_balance": self.starting_balance,
+                "balance":          self.balance,
+                "total_trades":     self.total_trades,
+                "total_pnl":        self.total_pnl,
+                "total_fees":       self.total_fees,
+            }, self.overrides)
             try:
                 os.remove(self.state_path)
             except FileNotFoundError:
@@ -784,8 +791,9 @@ class SpotShadowSimulator:
                 data = json.load(f)
             saved_fp = data.get("config_fingerprint")
             if saved_fp is not None and saved_fp != self._fingerprint:
-                log.info(f"[SHADOW] {self.name}: config changed — resetting trades and state")
-                clear_shadow_trades(self._db_mode)
+                log.info(f"[SHADOW] {self.name}: config changed — archiving and resetting")
+                from .db import archive_shadow
+                archive_shadow(self.name, self._db_mode, "config_changed", data, self.overrides)
                 os.remove(self.state_path)
                 self.starting_balance = _live_spot_balance()
                 self.balance = self.starting_balance
@@ -1269,8 +1277,15 @@ class GridShadowSimulator:
 
     def reset(self):
         with self._lock:
-            from .db import clear_shadow_trades, log_balance
-            clear_shadow_trades(self._db_mode)
+            from .db import archive_shadow, log_balance
+            archive_shadow(self.name, self._db_mode, "manual_reset", {
+                "started_at":       self.started_at,
+                "starting_balance": self.starting_balance,
+                "balance":          self.balance,
+                "total_trades":     self.total_trades,
+                "total_pnl":        self.total_pnl,
+                "total_fees":       self.total_fees,
+            }, self.overrides)
             try:
                 os.remove(self.state_path)
             except FileNotFoundError:
@@ -1295,11 +1310,11 @@ class GridShadowSimulator:
             with open(self.state_path) as f:
                 data = json.load(f)
             if data.get("config_fingerprint") != self._fingerprint:
-                log.info(f"[SHADOW] {self.name}: config changed — resetting trades and state")
-                clear_shadow_trades(self._db_mode)
+                log.info(f"[SHADOW] {self.name}: config changed — archiving and resetting")
+                from .db import archive_shadow
+                archive_shadow(self.name, self._db_mode, "config_changed", data, self.overrides)
                 os.remove(self.state_path)
                 self.starting_balance = _live_spot_balance()
-                self.balance = self.starting_balance
                 self._slot_eur = self.starting_balance / self._n_levels
                 return
             self.started_at        = data.get("started_at",        None)

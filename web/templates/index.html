@@ -920,6 +920,64 @@
       </div>
     </section>
 
+    <!-- ── Archives ──────────────────────────────────────────────────────── -->
+    <section id="sh-archives-section" style="margin-top:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin-bottom:0">Archives</h2>
+        <button onclick="toggleArchives()" id="sh-archives-toggle" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">Show</button>
+      </div>
+      <div id="sh-archives-body" style="display:none">
+        <div class="tbl-wrap">
+          <table id="sh-archives-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Pairs</th>
+                <th>Reason</th>
+                <th>Period</th>
+                <th>Return</th>
+                <th>P&amp;L</th>
+                <th>Trades</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sh-archives-tbody">
+              <tr><td colspan="8" class="empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Detail panel (shown when a row is expanded) -->
+        <div id="sh-archive-detail" style="display:none;margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h3 id="sh-archive-detail-title" style="margin:0"></h3>
+            <div style="display:flex;gap:8px">
+              <button onclick="copyArchiveEnv()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">Copy .env config</button>
+              <button onclick="closeArchiveDetail()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">✕ Close</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Parameters</div>
+              <div id="sh-archive-params" style="font-size:12px;line-height:1.7;font-family:monospace"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Trades</div>
+              <div class="tbl-wrap" style="max-height:320px;overflow-y:auto">
+                <table id="sh-archive-trades-table" style="font-size:12px">
+                  <thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Price</th><th>Value</th><th>P&amp;L</th><th>Notes</th></tr></thead>
+                  <tbody id="sh-archive-trades-tbody"></tbody>
+                </table>
+              </div>
+              <div id="sh-archive-trades-more" style="text-align:center;margin-top:8px;display:none">
+                <button onclick="loadMoreArchiveTrades()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">Load more</button>
+              </div>
+            </div>
+          </div>
+          <!-- hidden textarea for copy -->
+          <textarea id="sh-archive-env-text" style="display:none"></textarea>
+        </div>
+      </div>
+    </section>
   </div><!-- /tab-spot-shadow -->
 
   <!-- ═══════════════════════ FUTURES SHADOWS TAB ══════════════════════ -->
@@ -1859,6 +1917,7 @@
   // ── Shadow tab ────────────────────────────────────────────────────────────
   let _shNames        = [];
   let _activeShadow   = null;
+  let _shRefreshing   = false;
   let _shSignals      = {};
   let _shPositions    = {};
   let _shChartPair    = null;
@@ -2050,6 +2109,7 @@
 
   function switchShadow(name) {
     _activeShadow = name;
+    _shRefreshing = false;
     _shTradesPage = 1;
     _markShSelector();
     if (_shPriceChart)  { _shPriceChart.destroy();  _shPriceChart  = null; }
@@ -2073,15 +2133,21 @@
 
   async function refreshShadowTab() {
     if (!_activeShadow) return;
-    await Promise.all([
-      refreshShRanking(),
-      refreshShPnlChart(),
-      refreshShStatus(),
-      refreshShSignals(),
-      refreshShTrades(),
-      refreshShStats(),
-      refreshShBalanceChart(),
-    ]);
+    if (_shRefreshing) return;
+    _shRefreshing = true;
+    try {
+      await Promise.all([
+        refreshShRanking(),
+        refreshShPnlChart(),
+        refreshShStatus(),
+        refreshShSignals(),
+        refreshShTrades(),
+        refreshShStats(),
+        refreshShBalanceChart(),
+      ]);
+    } finally {
+      _shRefreshing = false;
+    }
   }
 
   let _shPnlMode = 'pct';  // 'pct' | 'abs'
@@ -5064,6 +5130,194 @@ async function openSettingsModal(context) {
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSettingsModal(); closePinModal(); } });
 _initLock();
+
+  // ── Archives ─────────────────────────────────────────────────────────────
+  let _archivesLoaded = false;
+  let _activeArchiveId = null;
+  let _archiveTradesOffset = 0;
+  let _archiveTradesTotal  = 0;
+  const _ARCHIVE_TRADES_LIMIT = 50;
+
+  function toggleArchives() {
+    const body   = document.getElementById('sh-archives-body');
+    const toggle = document.getElementById('sh-archives-toggle');
+    const open   = body.style.display === 'none';
+    body.style.display  = open ? '' : 'none';
+    toggle.textContent  = open ? 'Hide' : 'Show';
+    if (open && !_archivesLoaded) loadArchives();
+  }
+
+  async function loadArchives() {
+    try {
+      const res  = await fetch('/api/archives');
+      const data = await res.json();
+      _archivesLoaded = true;
+      const tbody = document.getElementById('sh-archives-tbody');
+      const snaps = data.snapshots || [];
+      if (!snaps.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No archives yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = snaps.map(s => {
+        const retPct   = s.starting_balance > 0
+          ? ((s.final_balance - s.starting_balance) / s.starting_balance * 100)
+          : 0;
+        const retColor = retPct >= 0 ? 'var(--green)' : 'var(--red)';
+        const pnlColor = s.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const reasonBadge = {
+          config_changed: '<span style="color:var(--yellow);font-size:11px">config change</span>',
+          manual_reset:   '<span style="color:var(--muted);font-size:11px">manual reset</span>',
+          shadow_removed: '<span style="color:var(--red);font-size:11px">removed</span>',
+        }[s.archive_reason] || s.archive_reason;
+        const from = s.first_trade_at ? new Date(s.first_trade_at).toLocaleDateString('fi-FI') : '—';
+        const to   = s.last_trade_at  ? new Date(s.last_trade_at).toLocaleDateString('fi-FI')  : '—';
+        const period = s.first_trade_at ? `${from} → ${to}` : '—';
+        return `<tr>
+          <td><strong>${escHtml(s.name)}</strong></td>
+          <td style="color:var(--muted);font-size:12px">${(s.pairs||[]).join(', ')}</td>
+          <td>${reasonBadge}</td>
+          <td style="color:var(--muted);font-size:12px">${period}</td>
+          <td style="color:${retColor}">${retPct >= 0 ? '+' : ''}${retPct.toFixed(2)}%</td>
+          <td style="color:${pnlColor}">${s.total_pnl >= 0 ? '+' : ''}${CURRENCY_SYMBOL}${s.total_pnl.toFixed(2)}</td>
+          <td>${s.total_trades}</td>
+          <td><button onclick="openArchiveDetail(${s.id},'${escHtml(s.name)}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;padding:2px 7px;cursor:pointer">View</button></td>
+        </tr>`;
+      }).join('');
+    } catch(e) { console.error('archives', e); }
+  }
+
+  async function openArchiveDetail(id, name) {
+    _activeArchiveId    = id;
+    _archiveTradesOffset = 0;
+    document.getElementById('sh-archive-detail').style.display = '';
+    document.getElementById('sh-archive-detail-title').textContent = name;
+    document.getElementById('sh-archive-trades-tbody').innerHTML = '<tr><td colspan="7" class="empty">Loading…</td></tr>';
+    document.getElementById('sh-archive-params').innerHTML = 'Loading…';
+
+    try {
+      const snap = await fetch(`/api/archive/${id}`).then(r => r.json());
+      const ov   = snap.overrides || {};
+
+      // Build params display
+      const paramMap = {
+        pairs:                      'Pairs',
+        spot_rsi_period:            'RSI Period',
+        spot_rsi_oversold:          'RSI Oversold',
+        spot_rsi_overbought:        'RSI Overbought',
+        spot_take_profit_pct:       'Take Profit',
+        spot_trailing_stop_pct:     'Trailing Stop',
+        spot_profit_floor_pct:      'Profit Floor',
+        spot_min_exit_profit_pct:   'Min Exit Profit',
+        spot_ema_gap_pct:           'EMA Gap',
+        spot_dca_max:               'DCA Max',
+        spot_dca_drop_pct:          'DCA Drop',
+        spot_dca_size_pct:          'DCA Size',
+        spot_hard_stop_pct:         'Hard Stop',
+        spot_time_stop_days:        'Time Stop (days)',
+        spot_stop_cooldown_candles: 'Cooldown (candles)',
+        spot_balance:               'Starting Balance',
+        interval:                   'Interval',
+      };
+      const pctKeys = new Set(['spot_take_profit_pct','spot_trailing_stop_pct','spot_profit_floor_pct',
+        'spot_min_exit_profit_pct','spot_ema_gap_pct','spot_dca_drop_pct','spot_dca_size_pct',
+        'spot_hard_stop_pct']);
+      const rows = Object.entries(paramMap)
+        .filter(([k]) => ov[k] !== undefined && ov[k] !== null)
+        .map(([k, label]) => {
+          let val = ov[k];
+          if (Array.isArray(val)) val = val.join(', ');
+          else if (pctKeys.has(k)) val = (val * 100).toFixed(1) + '%';
+          return `<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:var(--muted)">${label}</span><span>${escHtml(String(val))}</span></div>`;
+        }).join('');
+      document.getElementById('sh-archive-params').innerHTML = rows || '<span style="color:var(--muted)">No overrides stored.</span>';
+
+      // Build .env config text for copy
+      const envName = name.toUpperCase();
+      const ovKeyToEnvSuffix = {
+        spot_rsi_period:            'RSI_PERIOD',
+        spot_rsi_oversold:          'RSI_OVERSOLD',
+        spot_rsi_overbought:        'RSI_OVERBOUGHT',
+        spot_take_profit_pct:       'TAKE_PROFIT_PCT',
+        spot_trailing_stop_pct:     'TRAILING_STOP_PCT',
+        spot_profit_floor_pct:      'PROFIT_FLOOR_PCT',
+        spot_min_exit_profit_pct:   'MIN_EXIT_PROFIT_PCT',
+        spot_ema_gap_pct:           'EMA_GAP_PCT',
+        spot_dca_max:               'DCA_MAX',
+        spot_dca_drop_pct:          'DCA_DROP_PCT',
+        spot_dca_size_pct:          'DCA_SIZE_PCT',
+        spot_hard_stop_pct:         'HARD_STOP_PCT',
+        spot_time_stop_days:        'TIME_STOP_DAYS',
+        spot_stop_cooldown_candles: 'STOP_COOLDOWN_CANDLES',
+        spot_balance:               'BALANCE',
+        spot_position_size_pct:     'POSITION_SIZE_PCT',
+      };
+      let envLines = [`SPOT_SHADOW_${envName}_PAIRS=${(snap.pairs||[]).join(',')}`];
+      if (snap.overrides.interval) envLines.push(`SPOT_SHADOW_${envName}_INTERVAL=${snap.overrides.interval}`);
+      for (const [k, suffix] of Object.entries(ovKeyToEnvSuffix)) {
+        if (ov[k] !== undefined && ov[k] !== null) {
+          envLines.push(`SPOT_SHADOW_${envName}_${suffix}=${ov[k]}`);
+        }
+      }
+      document.getElementById('sh-archive-env-text').value = envLines.join('\n');
+
+    } catch(e) { console.error('archive detail', e); }
+
+    await loadArchiveTradesPage();
+  }
+
+  async function loadArchiveTradesPage() {
+    if (_activeArchiveId === null) return;
+    try {
+      const res  = await fetch(`/api/archive/${_activeArchiveId}/trades?limit=${_ARCHIVE_TRADES_LIMIT}&offset=${_archiveTradesOffset}`);
+      const data = await res.json();
+      _archiveTradesTotal = data.total;
+      const tbody = document.getElementById('sh-archive-trades-tbody');
+      if (_archiveTradesOffset === 0) tbody.innerHTML = '';
+      if (!data.trades.length && _archiveTradesOffset === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">No trades recorded.</td></tr>';
+        return;
+      }
+      tbody.innerHTML += data.trades.map(t => {
+        const pnlCell = t.side === 'SELL' && t.pnl !== null
+          ? `<td style="color:${t.pnl>=0?'var(--green)':'var(--red)'}">${t.pnl>=0?'+':''}${CURRENCY_SYMBOL}${Math.abs(t.pnl).toFixed(2)}</td>`
+          : '<td style="color:var(--muted)">—</td>';
+        const ts = new Date(t.timestamp).toLocaleString('fi-FI', {
+          day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Helsinki'
+        });
+        return `<tr>
+          <td style="color:var(--muted);font-size:11px">${ts}</td>
+          <td>${escHtml(t.pair)}</td>
+          <td style="color:${t.side==='BUY'?'var(--green)':'var(--red)'}">${t.side}</td>
+          <td>${CURRENCY_SYMBOL}${t.price.toFixed(4)}</td>
+          <td>${CURRENCY_SYMBOL}${t.value_eur.toFixed(2)}</td>
+          ${pnlCell}
+          <td style="color:var(--muted);font-size:11px">${escHtml(t.notes||'')}</td>
+        </tr>`;
+      }).join('');
+      _archiveTradesOffset += data.trades.length;
+      const moreBtn = document.getElementById('sh-archive-trades-more');
+      moreBtn.style.display = _archiveTradesOffset < _archiveTradesTotal ? '' : 'none';
+    } catch(e) { console.error('archive trades', e); }
+  }
+
+  function loadMoreArchiveTrades() { loadArchiveTradesPage(); }
+
+  function closeArchiveDetail() {
+    document.getElementById('sh-archive-detail').style.display = 'none';
+    _activeArchiveId = null;
+  }
+
+  function copyArchiveEnv() {
+    const ta = document.getElementById('sh-archive-env-text');
+    ta.style.display = '';
+    ta.select();
+    document.execCommand('copy');
+    ta.style.display = 'none';
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = orig, 1500);
+  }
 </script>
 </body>
 </html>

@@ -974,6 +974,29 @@ def api_shadows_create():
     return jsonify({"ok": True, "name": name})
 
 
+@app.route("/api/archives", methods=["GET"])
+def api_archives():
+    return jsonify({"snapshots": db.get_archived_snapshots()})
+
+
+@app.route("/api/archive/<int:snapshot_id>", methods=["GET"])
+def api_archive_detail(snapshot_id):
+    snap = db.get_archived_snapshot(snapshot_id)
+    if not snap:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(snap)
+
+
+@app.route("/api/archive/<int:snapshot_id>/trades", methods=["GET"])
+def api_archive_trades(snapshot_id):
+    limit  = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+    return jsonify({
+        "trades": db.get_archived_trades(snapshot_id, limit, offset),
+        "total":  db.get_archived_trade_count(snapshot_id),
+    })
+
+
 @app.route("/api/shadows/reload", methods=["POST"])
 def api_shadows_reload():
     allowed, rate_limited = _check_pin()
