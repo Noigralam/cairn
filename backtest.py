@@ -1526,6 +1526,250 @@ def run_shadow_backtest(days_list: list[int]):
 
 
 # ---------------------------------------------------------------------------
+# Scored shadow: multi-pair single-position backtest + weight sweep
+# ---------------------------------------------------------------------------
+
+def run_scored_shadow(
+    pairs: list[str],
+    df_map: dict,           # {pair: DataFrame}
+    start_balance: float,
+    rsi_buy:    int   = None,
+    rsi_sell:   int   = None,
+    rsi_period: int   = None,
+    tp_pct:     float = None,
+    trail_pct:  float = None,
+    floor_pct:  float = None,
+    min_exit:   float = None,
+    ema_gap:    float = None,
+    time_stop_days: float = 0,
+    hard_stop:  float = 0,
+    stop_cooldown: int = 0,
+    interval:   str   = INTERVAL,
+    w_rsi:      float = 0.5,
+    w_vol:      float = 0.25,
+    w_drop:     float = 0.25,
+    w_ema:      float = 0.0,
+    drop_period: int  = 10,
+    vol_period:  int  = 20,
+) -> tuple[list[Trade], float]:
+    """Backtest scored single-position mode: one position at a time, enters highest-scored pair."""
+    fee_rate   = config.SPOT_FEE
+    rsi_buy    = rsi_buy    if rsi_buy    is not None else config.SPOT_RSI_OVERSOLD
+    rsi_sell   = rsi_sell   if rsi_sell   is not None else config.SPOT_RSI_OVERBOUGHT
+    rsi_period = rsi_period if rsi_period is not None else config.SPOT_RSI_PERIOD
+    tp_pct     = tp_pct     if tp_pct     is not None else config.SPOT_TAKE_PROFIT_PCT
+    trail_pct  = trail_pct  if trail_pct  is not None else config.SPOT_TRAILING_STOP_PCT
+    floor_pct  = floor_pct  if floor_pct  is not None else config.SPOT_PROFIT_FLOOR_PCT
+    min_exit   = min_exit   if min_exit   is not None else config.SPOT_MIN_EXIT_PROFIT_PCT
+    ema_gap    = ema_gap    if ema_gap    is not None else config.SPOT_EMA_GAP_PCT
+
+    total_w = w_rsi + w_vol + w_drop + w_ema
+    if total_w <= 0:
+        total_w = 1.0
+
+    # Precompute arrays per pair and align lengths
+    pre: dict[str, tuple] = {}
+    for pair in pairs:
+        df = df_map[pair]
+        rsi_a, ema_a, close_a, hi_a, lo_a = precompute(df, rsi_period)
+        vol_a    = df["volume"].values
+        vol_ma_a = (df["volume"].rolling(vol_period).mean().values if vol_period > 0
+                    else np.full(len(df), np.nan))
+        pre[pair] = (rsi_a, ema_a, close_a, hi_a, lo_a, vol_a, vol_ma_a)
+
+    min_len = min(len(pre[p][0]) for p in pairs)
+    # Trim all to same length (most recent candles)
+    pre = {p: tuple(arr[-min_len:] for arr in arrs) for p, arrs in pre.items()}
+
+    candles_per_day = CANDLES_PER_DAY.get(interval, 96)
+    balance        = start_balance
+    portfolio_peak = start_balance
+    held_pair:      str | None = None
+    held_pos:       Position | None = None
+    held_entry_i:   int = 0
+    cooldowns:      dict[str, int] = {}   # pair -> candle index when cooldown expires
+    trades:         list[Trade] = []
+
+    for i in range(WARMUP, min_len):
+        # --- exit checks if holding ---
+        if held_pos is not None:
+            rsi_a, ema_a, close_a, hi_a, lo_a = pre[held_pair][:5]
+            price = float(close_a[i])
+            hi    = float(hi_a[i])
+            lo    = float(lo_a[i])
+            rsi   = float(rsi_a[i])
+            update_peak(held_pos, hi)
+            stop_level = max(
+                held_pos.entry_price * (1 + fee_rate + floor_pct) / (1 - fee_rate),
+                held_pos.peak() * (1 - trail_pct),
+            )
+            tp_price = held_pos.entry_price * (1 + tp_pct)
+            exited = False
+            # hard stop
+            if hard_stop > 0 and lo <= held_pos.entry_price * (1 - hard_stop):
+                ep = held_pos.entry_price * (1 - hard_stop)
+                bf = held_pos.value_eur * fee_rate
+                sf = held_pos.amount * ep * fee_rate
+                balance += held_pos.amount * ep - sf
+                trades.append(Trade(calc_pnl(held_pos, ep, bf, sf), bf + sf, "hard_stop"))
+                exited = True
+            # take-profit
+            elif hi >= tp_price:
+                ep = tp_price
+                bf = held_pos.value_eur * fee_rate
+                sf = held_pos.amount * ep * fee_rate
+                balance += held_pos.amount * ep - sf
+                trades.append(Trade(calc_pnl(held_pos, ep, bf, sf), bf + sf, "take_profit"))
+                exited = True
+            # trailing stop
+            elif held_pos.peak() > stop_level and lo <= stop_level:
+                ep = stop_level
+                bf = held_pos.value_eur * fee_rate
+                sf = held_pos.amount * ep * fee_rate
+                balance += held_pos.amount * ep - sf
+                trades.append(Trade(calc_pnl(held_pos, ep, bf, sf), bf + sf, "trailing_stop"))
+                if stop_cooldown > 0:
+                    cooldowns[held_pair] = i + stop_cooldown
+                exited = True
+            # time stop
+            elif (time_stop_days > 0
+                    and (i - held_entry_i) > time_stop_days * candles_per_day
+                    and held_pos.peak() <= stop_level):
+                bf = held_pos.value_eur * fee_rate
+                sf = held_pos.amount * price * fee_rate
+                balance += held_pos.amount * price - sf
+                trades.append(Trade(calc_pnl(held_pos, price, bf, sf), bf + sf, "time_stop"))
+                exited = True
+            # RSI sell signal
+            elif rsi > rsi_sell and price >= held_pos.entry_price * (1 + min_exit):
+                bf = held_pos.value_eur * fee_rate
+                sf = held_pos.amount * price * fee_rate
+                balance += held_pos.amount * price - sf
+                trades.append(Trade(calc_pnl(held_pos, price, bf, sf), bf + sf, "signal"))
+                exited = True
+
+            if exited:
+                held_pos  = None
+                held_pair = None
+            else:
+                portfolio_peak = max(portfolio_peak, balance + held_pos.amount * price)
+                continue
+
+        # --- no position: score all candidates ---
+        portfolio_peak = max(portfolio_peak, balance)
+        candidates: list[tuple[str, float, float]] = []
+        for pair in pairs:
+            if cooldowns.get(pair, 0) > i:
+                continue
+            rsi_a, ema_a, close_a, hi_a, lo_a, vol_a, vol_ma_a = pre[pair]
+            price = float(close_a[i])
+            rsi   = float(rsi_a[i])
+            ema   = float(ema_a[i])
+            if np.isnan(rsi) or rsi >= rsi_buy:
+                continue
+            if ema_gap > 0 and price < ema * (1 + ema_gap):
+                continue
+            # scoring components
+            s_rsi  = max(0.0, (rsi_buy - rsi) / rsi_buy) if rsi_buy > 0 else 0.0
+            vol_ma = float(vol_ma_a[i]) if not np.isnan(vol_ma_a[i]) else 0.0
+            vol_c  = float(vol_a[i])
+            s_vol  = (min(vol_c / vol_ma, 3.0) / 3.0) if (vol_ma > 0 and w_vol > 0) else 0.0
+            n      = min(drop_period, i + 1)
+            hi_arr = pre[pair][3]
+            high_n = float(hi_arr[max(0, i - n + 1): i + 1].max())
+            s_drop = max(0.0, (high_n - price) / high_n) if high_n > 0 else 0.0
+            s_ema  = max(0.0, 1.0 - (price / ema - 1.0) / 0.20) if (ema > 0 and price > ema and w_ema > 0) else (1.0 if w_ema > 0 else 0.0)
+            score  = (w_rsi * s_rsi + w_vol * s_vol + w_drop * s_drop + w_ema * s_ema) / total_w
+            candidates.append((pair, price, score))
+
+        if not candidates:
+            continue
+        candidates.sort(key=lambda x: x[2], reverse=True)
+        entry_pair, entry_price, _ = candidates[0]
+        max_size = balance / (1 + fee_rate)
+        size     = min(balance, max_size)
+        if size < 1:
+            continue
+        held_pos     = Position(entry_pair, entry_price, size / entry_price, size,
+                                entry_price * (1 + tp_pct), entry_price)
+        held_pair    = entry_pair
+        held_entry_i = i
+        balance     -= size + size * fee_rate
+
+    if held_pos is not None:
+        price = float(pre[held_pair][2][-1])
+        bf = held_pos.value_eur * fee_rate
+        sf = held_pos.amount * price * fee_rate
+        balance += held_pos.amount * price - sf
+        trades.append(Trade(calc_pnl(held_pos, price, bf, sf), bf + sf, "end_of_data"))
+
+    return trades, balance
+
+
+def sweep_score_weights(pairs: list[str], days_list: list[int], shadow_name: str = ""):
+    """Sweep all scoring weight combinations (rsi, vol, drop summing to 1.0, step=0.1)."""
+    base_ov = config.get_shadow_overrides(shadow_name) if shadow_name else {}
+    start   = float(base_ov.get("spot_balance", config.SPOT_SIMULATION_BALANCE))
+    interval = base_ov.get("interval", INTERVAL)
+
+    kwargs = dict(
+        rsi_buy     = base_ov.get("spot_rsi_oversold",          config.SPOT_RSI_OVERSOLD),
+        rsi_sell    = base_ov.get("spot_rsi_overbought",        config.SPOT_RSI_OVERBOUGHT),
+        rsi_period  = base_ov.get("spot_rsi_period",            config.SPOT_RSI_PERIOD),
+        tp_pct      = base_ov.get("spot_take_profit_pct",       config.SPOT_TAKE_PROFIT_PCT),
+        trail_pct   = base_ov.get("spot_trailing_stop_pct",     config.SPOT_TRAILING_STOP_PCT),
+        floor_pct   = base_ov.get("spot_profit_floor_pct",      config.SPOT_PROFIT_FLOOR_PCT),
+        min_exit    = base_ov.get("spot_min_exit_profit_pct",   config.SPOT_MIN_EXIT_PROFIT_PCT),
+        ema_gap     = base_ov.get("spot_ema_gap_pct",           config.SPOT_EMA_GAP_PCT),
+        time_stop_days = base_ov.get("spot_time_stop_days",     config.SPOT_TIME_STOP_DAYS),
+        hard_stop   = base_ov.get("spot_hard_stop_pct",         config.SPOT_HARD_STOP_PCT),
+        stop_cooldown  = base_ov.get("spot_stop_cooldown_candles", config.SPOT_STOP_COOLDOWN_CANDLES),
+        drop_period = base_ov.get("spot_score_drop_period",     10),
+        vol_period  = base_ov.get("spot_score_vol_period",      20),
+        interval    = interval,
+    )
+
+    label = shadow_name or "+".join(pairs)
+    for days in days_list:
+        _header(days, f"Score weight sweep — {label}", wide=True)
+        print(f"  {'#':<3}  {'rsi_w':>6}  {'vol_w':>6}  {'drop_w':>7}  {'return':>8}  "
+              f"{'PnL':>8}  {'n':>4}  {'W/L':<7}  Exits")
+        print(f"  {'─'*3}  {'─'*6}  {'─'*6}  {'─'*7}  {'─'*8}  "
+              f"{'─'*8}  {'─'*4}  {'─'*7}  {'─'*28}")
+
+        df_map = {p: fetch(p, days, interval=interval) for p in pairs}
+        results = []
+        # Generate all (w_rsi, w_vol, w_drop) where each is a multiple of 0.1 and they sum to 1.0
+        STEP = 10
+        for r in range(STEP + 1):
+            for v in range(STEP + 1 - r):
+                d = STEP - r - v
+                w_rsi, w_vol, w_drop = r / STEP, v / STEP, d / STEP
+                trades, final = run_scored_shadow(
+                    pairs, df_map, start, w_rsi=w_rsi, w_vol=w_vol, w_drop=w_drop, w_ema=0.0,
+                    **kwargs
+                )
+                realized   = [t for t in trades if t.exit_reason != "end_of_data"]
+                total_pnl  = sum(t.pnl for t in realized)
+                return_pct = total_pnl / start * 100
+                results.append((w_rsi, w_vol, w_drop, realized, total_pnl, return_pct))
+
+        results.sort(key=lambda x: x[5], reverse=True)
+        for rank, (wr, wv, wd, realized, pnl, ret) in enumerate(results, 1):
+            wins = sum(1 for t in realized if t.pnl > 0)
+            n    = len(realized)
+            wl   = f"{wins}/{n - wins}" if n else "—"
+            reasons: dict[str, int] = {}
+            for t in realized:
+                reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+            exits = "  ".join(f"{_EXIT_SHORT.get(k, k)}×{v}" for k, v in reasons.items())
+            print(f"  {rank:<3}  {wr:>6.1f}  {wv:>6.1f}  {wd:>7.1f}  {ret:>+7.1f}%  "
+                  f"{pnl:>+8.2f}  {n:>4}  {wl:<7}  {exits}")
+        print()
+    _legend(wide=True)
+
+
+# ---------------------------------------------------------------------------
 # Dashboard API
 # ---------------------------------------------------------------------------
 
@@ -1858,6 +2102,23 @@ if __name__ == "__main__":
             _tee.close()
             print(f"Unknown sweep '{mode}'. Options: {', '.join(sweeps)}, all")
             sys.exit(1)
+        _tee.close()
+    elif str_args and str_args[0] == "score_sweep":
+        # python backtest.py score_sweep SHADOW_NAME_OR_PAIRS [days...] [--cached]
+        target    = str_args[1] if len(str_args) > 1 else ""
+        days_list = day_args or [365, 180]
+        shadow_name = ""
+        if target in config.get_shadow_profiles():
+            shadow_name = target
+            ov = config.get_shadow_overrides(target)
+            pairs = ov.get("pairs", config.SPOT_TRADING_PAIRS)
+        elif target:
+            pairs = [p.strip().upper() for p in target.split(",") if p.strip()]
+        else:
+            pairs = list(config.SPOT_TRADING_PAIRS)
+        _days_str = "_".join(f"{d}d" for d in days_list)
+        _tee = _Tee(f"{RESULTS_DIR}/spot_score_sweep_{target or 'default'}_{_days_str}_{_date}.txt")
+        sweep_score_weights(pairs, days_list, shadow_name=shadow_name)
         _tee.close()
     elif str_args and str_args[0] == "random":
         # python backtest.py random [n_trials] [days...] [--cached]

@@ -1068,6 +1068,162 @@ class SpotShadowSimulator:
         }
 
 
+class SpotScoredShadow(SpotShadowSimulator):
+    """Single-position shadow: scores all BUY-signalling pairs each candle and enters the best one.
+    Composite score = weighted sum of RSI depth, volume surge, price drop, and EMA proximity."""
+
+    is_scored = True
+
+    def _score(self, rsi: float, rsi_oversold: float,
+               vol_curr: float, vol_ma: float,
+               close: float, high_n: float, ema: float) -> float:
+        w_rsi  = float(self._o("spot_score_rsi_weight",  0.5))
+        w_vol  = float(self._o("spot_score_vol_weight",  0.25))
+        w_drop = float(self._o("spot_score_drop_weight", 0.25))
+        w_ema  = float(self._o("spot_score_ema_weight",  0.0))
+
+        # RSI depth: how far into oversold (0 = at threshold, 1 = RSI=0)
+        s_rsi = max(0.0, (rsi_oversold - rsi) / rsi_oversold) if rsi_oversold > 0 else 0.0
+
+        # Volume surge: current vol vs rolling mean, capped at 3×
+        s_vol = (min(vol_curr / vol_ma, 3.0) / 3.0) if (vol_ma > 0 and w_vol > 0) else 0.0
+
+        # Price drop: how far below the recent N-candle high
+        s_drop = max(0.0, (high_n - close) / high_n) if (high_n > 0 and w_drop > 0) else 0.0
+
+        # EMA proximity: prefer price close to EMA200 (not overextended); 0 at 20% above EMA
+        if ema > 0 and w_ema > 0 and close > ema:
+            s_ema = max(0.0, 1.0 - (close / ema - 1.0) / 0.20)
+        else:
+            s_ema = 1.0 if w_ema > 0 else 0.0
+
+        total_w = w_rsi + w_vol + w_drop + w_ema
+        if total_w <= 0:
+            return s_rsi
+        return (w_rsi * s_rsi + w_vol * s_vol + w_drop * s_drop + w_ema * s_ema) / total_w
+
+    def tick_multi(self, prices: dict):
+        """Process one candle across all monitored pairs. If holding, runs exits; otherwise scores and enters best."""
+        from .candles import get_df
+        from .strategy import compute_signal, Signal
+
+        with self._lock:
+            drop_period = int(self._o("spot_score_drop_period", 10))
+            vol_period  = int(self._o("spot_score_vol_period",  20))
+
+            if self.positions:
+                # Position open — run exit checks only for the held pair
+                pair  = next(iter(self.positions))
+                price = prices.get(pair)
+                if price is None:
+                    return
+                pos   = self.positions[pair]
+                update_peak(pos, price)
+                stop      = self._trailing_stop_level(pos)
+                hard_stop = self._o("spot_hard_stop_pct", config.hard_stop_for(pair))
+                if check_hard_stop(pos, price, hard_stop):
+                    self._close(pair, price, "hard_stop")
+                    self._save()
+                    return
+                if price >= pos.take_profit_price > 0 and not pos.partial_closed:
+                    pct = self._o("spot_partial_close_pct", config.partial_close_for(pair))
+                    if pct > 0:
+                        self._partial_close(pair, price)
+                    else:
+                        self._close(pair, price, "take_profit")
+                    self._save()
+                    return
+                if pos.peak() > stop and price <= stop:
+                    self._close(pair, price, "trailing_stop")
+                    self._save()
+                    return
+                time_stop = self._o("spot_time_stop_days", config.time_stop_for(pair))
+                if time_stop > 0 and pos.opened_at > 0 and (_time.time() - pos.opened_at) / 86400 > time_stop:
+                    self._close(pair, price, "time_stop")
+                    self._save()
+                    return
+                df     = get_df(pair, self.interval)
+                result = compute_signal(
+                    df,
+                    rsi_period     = self._o("spot_rsi_period",           config.rsi_period_for(pair)),
+                    rsi_oversold   = self._o("spot_rsi_oversold",         config.rsi_oversold_for(pair)),
+                    rsi_overbought = self._o("spot_rsi_overbought",       config.rsi_overbought_for(pair)),
+                    ema_gap        = self._o("spot_ema_gap_pct",          config.ema_gap_for(pair)),
+                    vol_period     = self._o("spot_volume_filter_period", config.vol_period_for(pair)),
+                    vol_mult       = self._o("spot_volume_filter_mult",   config.vol_mult_for(pair)),
+                )
+                if result.signal == Signal.SELL:
+                    min_exit = self._o("spot_min_exit_profit_pct", config.min_exit_for(pair))
+                    if price >= pos.entry_price * (1 + min_exit):
+                        self._close(pair, price, "signal")
+                        self._save()
+                        return
+                port_val = self.balance + price * pos.amount
+                if port_val > self.portfolio_peak:
+                    self.portfolio_peak = port_val
+                log_balance(round(port_val, 2), self._db_mode)
+                self._save()
+                return
+
+            # No position — score all BUY-signalling pairs
+            candidates: list[tuple[str, float, float]] = []
+            for pair in (self.pairs or config.SPOT_TRADING_PAIRS):
+                price = prices.get(pair)
+                if price is None:
+                    continue
+                if self._stop_cooldowns.get(pair, 0) > _time.time():
+                    continue
+                reentry_threshold = self._reentry_drop_prices.get(pair)
+                if reentry_threshold is not None and price > reentry_threshold:
+                    continue
+                df     = get_df(pair, self.interval)
+                rsi_os = self._o("spot_rsi_oversold", config.rsi_oversold_for(pair))
+                result = compute_signal(
+                    df,
+                    rsi_period     = self._o("spot_rsi_period",           config.rsi_period_for(pair)),
+                    rsi_oversold   = rsi_os,
+                    rsi_overbought = self._o("spot_rsi_overbought",       config.rsi_overbought_for(pair)),
+                    ema_gap        = self._o("spot_ema_gap_pct",          config.ema_gap_for(pair)),
+                    vol_period     = self._o("spot_volume_filter_period", config.vol_period_for(pair)),
+                    vol_mult       = self._o("spot_volume_filter_mult",   config.vol_mult_for(pair)),
+                )
+                if result.signal != Signal.BUY:
+                    continue
+                # Volume for scoring (separate from the vol filter; uses score_vol_period)
+                if vol_period > 0 and len(df) >= vol_period + 1:
+                    vol_ma   = float(df["volume"].rolling(vol_period).mean().iloc[-1])
+                    vol_curr = float(df["volume"].iloc[-1])
+                else:
+                    vol_ma = vol_curr = 1.0
+                # Price drop from recent high
+                n = min(drop_period, len(df))
+                high_n = float(df["high"].iloc[-n:].max()) if n > 0 else price
+                score = self._score(
+                    rsi=result.rsi, rsi_oversold=float(rsi_os),
+                    vol_curr=vol_curr, vol_ma=vol_ma,
+                    close=price, high_n=high_n, ema=result.ema_trend,
+                )
+                candidates.append((pair, price, score))
+
+            if candidates:
+                candidates.sort(key=lambda x: x[2], reverse=True)
+                log.info(
+                    "[SCORED:%s] %s → entering %s",
+                    self.name,
+                    [(p, f"{s:.3f}") for p, _, s in candidates],
+                    candidates[0][0],
+                )
+                self._open(candidates[0][0], candidates[0][1])
+
+            port_val = self.balance + sum(
+                prices[p] * pos.amount for p, pos in self.positions.items() if p in prices
+            )
+            if port_val > self.portfolio_peak:
+                self.portfolio_peak = port_val
+            log_balance(round(port_val, 2), self._db_mode)
+            self._save()
+
+
 class GridShadowSimulator:
     """Grid trading shadow: maintains a ladder of fixed buy/sell levels around a reference price.
     Each slot is funded with starting_balance / grid_levels EUR. Sells before buys on each candle."""
@@ -1373,6 +1529,8 @@ def init_spot_shadows() -> list[SpotShadowSimulator]:
         state_path = os.path.join(_DATA_DIR, f"spot_state_shadow_{name.lower()}.json")
         if overrides.get("type") == "grid":
             _shadows.append(GridShadowSimulator(name, state_path, overrides))
+        elif overrides.get("type") == "scored":
+            _shadows.append(SpotScoredShadow(name, state_path, overrides))
         else:
             _shadows.append(SpotShadowSimulator(name, state_path, overrides))
     if _shadows:
@@ -1402,6 +1560,8 @@ def reload_spot_shadows():
             state_path = os.path.join(_DATA_DIR, f"spot_state_shadow_{name.lower()}.json")
             if overrides.get("type") == "grid":
                 _shadows.append(GridShadowSimulator(name, state_path, overrides))
+            elif overrides.get("type") == "scored":
+                _shadows.append(SpotScoredShadow(name, state_path, overrides))
             else:
                 _shadows.append(SpotShadowSimulator(name, state_path, overrides))
             log.info(f"[SHADOW] Added new shadow: {name}")

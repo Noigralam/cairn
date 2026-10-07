@@ -249,6 +249,13 @@ def _parse_spot_overrides(raw: dict) -> dict:
         "balance":                 ("spot_balance",                 float),
         "grid_spacing":            ("spot_grid_spacing",            float),
         "grid_levels":             ("spot_grid_levels",             int),
+        # scored shadow: scoring component weights (0.0–1.0 each; normalised at runtime)
+        "score_rsi_weight":        ("spot_score_rsi_weight",        float),
+        "score_vol_weight":        ("spot_score_vol_weight",        float),
+        "score_drop_weight":       ("spot_score_drop_weight",       float),
+        "score_ema_weight":        ("spot_score_ema_weight",        float),
+        "score_drop_period":       ("spot_score_drop_period",       int),
+        "score_vol_period":        ("spot_score_vol_period",        int),
     }
     # fmt: on
     result: dict = {}

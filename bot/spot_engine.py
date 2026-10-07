@@ -213,9 +213,13 @@ def _loop():
 
             # tick all shadow simulators with the same candle data
             for shadow in get_spot_shadows():
-                tick_pairs = shadow.pairs if shadow.pairs else config.SPOT_TRADING_PAIRS
-                for pair in tick_pairs:
-                    shadow.tick(pair, prices)
+                if getattr(shadow, "is_scored", False):
+                    tick_pairs = shadow.pairs if shadow.pairs else config.SPOT_TRADING_PAIRS
+                    shadow.tick_multi({p: prices[p] for p in tick_pairs if p in prices})
+                else:
+                    tick_pairs = shadow.pairs if shadow.pairs else config.SPOT_TRADING_PAIRS
+                    for pair in tick_pairs:
+                        shadow.tick(pair, prices)
 
             # snapshot portfolio value (cash + open position mark-to-market)
             snap_state = get_state()
