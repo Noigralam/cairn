@@ -891,81 +891,340 @@ def api_shadows_create():
     if not name.replace("_", "").isalnum():
         return jsonify({"error": "name must be alphanumeric (underscores allowed)"}), 400
 
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-    try:
-        with open(env_path, "r") as f:
-            lines = f.readlines()
-    except OSError as e:
-        return jsonify({"error": str(e)}), 500
-
     # Check duplicate
     existing = config.get_shadow_profiles()
     if name in [p.upper() for p in existing]:
         return jsonify({"error": f"shadow '{name}' already exists"}), 400
 
-    # Update SPOT_SHADOW_PROFILES line
-    new_lines = []
-    profiles_updated = False
-    for line in lines:
-        if line.startswith("SPOT_SHADOW_PROFILES="):
-            stripped = line.rstrip()
-            comment = ""
-            if " #" in stripped:
-                idx = stripped.index(" #")
-                comment = stripped[idx:]
-                stripped = stripped[:idx]
-            new_lines.append(stripped + f",{name}" + comment + "\n")
-            profiles_updated = True
-        else:
-            new_lines.append(line)
+    if _shadow_toml_exists():
+        # TOML path
+        section: dict = {}
+        pairs_val = data.get("pairs")
+        if pairs_val:
+            section["pairs"] = [p.strip().upper() for p in str(pairs_val).split(",") if p.strip()]
+        balance = data.get("balance")
+        if balance is not None:
+            section["balance"] = float(balance)
+        toml_param_map = {
+            "rsi_period":          ("rsi_period",              int),
+            "rsi_buy":             ("rsi_oversold",            int),
+            "rsi_sell":            ("rsi_overbought",          int),
+            "tp_pct":              ("take_profit_pct",         float),
+            "trail_pct":           ("trailing_stop_pct",       float),
+            "floor_pct":           ("profit_floor_pct",        float),
+            "min_exit":            ("min_exit_profit_pct",     float),
+            "pos_pct":             ("position_size_pct",       float),
+            "max_dca":             ("dca_max",                 int),
+            "dca_drop":            ("dca_drop_pct",            float),
+            "dca_step":            ("dca_step_pct",            float),
+            "ema_gap":             ("ema_gap_pct",             float),
+            "partial_close_pct":   ("partial_close_pct",       float),
+            "partial_close_trail": ("partial_close_trail_pct", float),
+        }
+        for req_key, (toml_key, cast) in toml_param_map.items():
+            val = data.get(req_key)
+            if val is not None:
+                try:
+                    section[toml_key] = cast(val)
+                except (ValueError, TypeError):
+                    pass
+        try:
+            _add_shadow_to_toml(name, section)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        # Legacy .env path
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        try:
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
 
-    if not profiles_updated:
-        new_lines.append(f"SPOT_SHADOW_PROFILES={name}\n")
-
-    # Build shadow override block
-    prefix = f"SPOT_SHADOW_{name}_"
-    block = [f"\n# Shadow: {name} (created from backtest)\n"]
-    pairs = data.get("pairs")
-    if pairs:
-        block.append(f"{prefix}PAIRS={pairs}\n")
-    balance = data.get("balance")
-    if balance is not None:
-        block.append(f"{prefix}BALANCE={float(balance):.2f}\n")
-
-    param_map = {
-        "rsi_period":  "RSI_PERIOD",
-        "rsi_buy":     "RSI_OVERSOLD",
-        "rsi_sell":    "RSI_OVERBOUGHT",
-        "tp_pct":      "TAKE_PROFIT_PCT",
-        "trail_pct":   "TRAILING_STOP_PCT",
-        "floor_pct":   "PROFIT_FLOOR_PCT",
-        "min_exit":    "MIN_EXIT_PROFIT_PCT",
-        "pos_pct":     "POSITION_SIZE_PCT",
-        "max_dca":           "DCA_MAX",
-        "dca_drop":          "DCA_DROP_PCT",
-        "dca_step":          "DCA_STEP_PCT",
-        "ema_gap":           "EMA_GAP_PCT",
-        "partial_close_pct": "PARTIAL_CLOSE_PCT",
-        "partial_close_trail": "PARTIAL_CLOSE_TRAIL_PCT",
-    }
-    int_params = {"rsi_period", "rsi_buy", "rsi_sell", "max_dca"}
-    for key, env_suffix in param_map.items():
-        val = data.get(key)
-        if val is not None:
-            if key in int_params:
-                block.append(f"{prefix}{env_suffix}={int(val)}\n")
+        # Update SPOT_SHADOW_PROFILES line
+        new_lines = []
+        profiles_updated = False
+        for line in lines:
+            if line.startswith("SPOT_SHADOW_PROFILES="):
+                stripped = line.rstrip()
+                comment = ""
+                if " #" in stripped:
+                    idx = stripped.index(" #")
+                    comment = stripped[idx:]
+                    stripped = stripped[:idx]
+                new_lines.append(stripped + f",{name}" + comment + "\n")
+                profiles_updated = True
             else:
-                block.append(f"{prefix}{env_suffix}={float(val):.4f}\n")
+                new_lines.append(line)
 
-    new_lines.extend(block)
+        if not profiles_updated:
+            new_lines.append(f"SPOT_SHADOW_PROFILES={name}\n")
 
-    try:
-        with open(env_path, "w") as f:
-            f.writelines(new_lines)
-    except OSError as e:
-        return jsonify({"error": str(e)}), 500
+        # Build shadow override block
+        prefix = f"SPOT_SHADOW_{name}_"
+        block = [f"\n# Shadow: {name} (created from backtest)\n"]
+        pairs = data.get("pairs")
+        if pairs:
+            block.append(f"{prefix}PAIRS={pairs}\n")
+        balance = data.get("balance")
+        if balance is not None:
+            block.append(f"{prefix}BALANCE={float(balance):.2f}\n")
+
+        param_map = {
+            "rsi_period":  "RSI_PERIOD",
+            "rsi_buy":     "RSI_OVERSOLD",
+            "rsi_sell":    "RSI_OVERBOUGHT",
+            "tp_pct":      "TAKE_PROFIT_PCT",
+            "trail_pct":   "TRAILING_STOP_PCT",
+            "floor_pct":   "PROFIT_FLOOR_PCT",
+            "min_exit":    "MIN_EXIT_PROFIT_PCT",
+            "pos_pct":     "POSITION_SIZE_PCT",
+            "max_dca":           "DCA_MAX",
+            "dca_drop":          "DCA_DROP_PCT",
+            "dca_step":          "DCA_STEP_PCT",
+            "ema_gap":           "EMA_GAP_PCT",
+            "partial_close_pct": "PARTIAL_CLOSE_PCT",
+            "partial_close_trail": "PARTIAL_CLOSE_TRAIL_PCT",
+        }
+        int_params = {"rsi_period", "rsi_buy", "rsi_sell", "max_dca"}
+        for key, env_suffix in param_map.items():
+            val = data.get(key)
+            if val is not None:
+                if key in int_params:
+                    block.append(f"{prefix}{env_suffix}={int(val)}\n")
+                else:
+                    block.append(f"{prefix}{env_suffix}={float(val):.4f}\n")
+
+        new_lines.extend(block)
+
+        try:
+            with open(env_path, "w") as f:
+                f.writelines(new_lines)
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
 
     # Trigger reload
+    if os.environ.get("CAIRN_DASHBOARD_ONLY"):
+        _queue_command(_SPOT_COMMANDS_PATH, {"action": "reload_shadows"})
+        return jsonify({"ok": True, "queued": True, "name": name})
+    from bot.spot_simulator import reload_spot_shadows
+    reload_spot_shadows()
+    return jsonify({"ok": True, "name": name})
+
+
+def _shadow_toml_exists() -> bool:
+    from bot import shadows_config as _sc
+    return os.path.exists(_sc.SHADOWS_PATH)
+
+
+def _add_shadow_to_toml(name: str, section: dict) -> None:
+    from bot import shadows_config as _sc
+    sc_data = _sc.load()
+    spot = sc_data.setdefault("spot", {})
+    profiles = list(spot.get("profiles", []))
+    if name not in profiles:
+        profiles.append(name)
+    spot["profiles"] = profiles
+    spot[name] = section
+    _sc.save(sc_data)
+
+
+def _remove_shadow_from_toml(name: str) -> None:
+    from bot import shadows_config as _sc
+    sc_data = _sc.load()
+    spot = sc_data.get("spot", {})
+    spot["profiles"] = [p for p in spot.get("profiles", []) if p.upper() != name.upper()]
+    spot.pop(name.upper(), None)
+    sc_data["spot"] = spot
+    _sc.save(sc_data)
+
+
+def _remove_shadow(name: str) -> None:
+    if _shadow_toml_exists():
+        _remove_shadow_from_toml(name)
+    else:
+        _remove_shadow_from_env(name)
+
+
+def _remove_shadow_from_env(name: str) -> None:
+    """Remove a shadow from SPOT_SHADOW_PROFILES and its override vars in .env."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    with open(env_path, "r") as f:
+        lines = f.readlines()
+    prefix = f"SPOT_SHADOW_{name}_"
+    comment_marker = f"# Shadow: {name}"
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if (stripped.startswith(comment_marker) and
+                (len(stripped) == len(comment_marker) or stripped[len(comment_marker)] in (' ', '(', '\t'))):
+            continue
+        if stripped.startswith(prefix):
+            continue
+        if line.startswith("SPOT_SHADOW_PROFILES="):
+            val_part = line.rstrip()
+            inline_comment = ""
+            if " #" in val_part:
+                idx = val_part.index(" #")
+                inline_comment = val_part[idx:]
+                val_part = val_part[:idx]
+            key, _, val = val_part.partition("=")
+            profiles = [p.strip() for p in val.split(",") if p.strip() and p.strip().upper() != name.upper()]
+            new_lines.append(f"{key}={','.join(profiles)}{inline_comment}\n")
+        else:
+            new_lines.append(line)
+    with open(env_path, "w") as f:
+        f.writelines(new_lines)
+
+
+@app.route("/api/shadows/<name>/archive_remove", methods=["POST"])
+def api_shadow_archive_remove(name):
+    allowed, rate_limited = _check_pin()
+    if rate_limited:
+        return jsonify({"error": "too many attempts — IP locked, run unlock_pin.sh on server"}), 429
+    if config.DASHBOARD_PIN and not allowed:
+        return jsonify({"error": "PIN required"}), 403
+    name = name.upper()
+    try:
+        _remove_shadow(name)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    if os.environ.get("CAIRN_DASHBOARD_ONLY"):
+        _queue_command(_SPOT_COMMANDS_PATH, {"action": "archive_remove", "name": name})
+        return jsonify({"ok": True, "queued": True})
+    from bot.spot_simulator import get_spot_shadows, reload_spot_shadows
+    for sh in get_spot_shadows():
+        if sh.name.upper() == name:
+            sh.reset()
+            break
+    reload_spot_shadows()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/archive/<int:snapshot_id>/restore", methods=["POST"])
+def api_archive_restore(snapshot_id):
+    allowed, rate_limited = _check_pin()
+    if rate_limited:
+        return jsonify({"error": "too many attempts — IP locked, run unlock_pin.sh on server"}), 429
+    if config.DASHBOARD_PIN and not allowed:
+        return jsonify({"error": "PIN required"}), 403
+
+    snap = db.get_archived_snapshot(snapshot_id)
+    if not snap:
+        return jsonify({"error": "Snapshot not found"}), 404
+
+    name = snap["name"].upper()
+    if name in [p.upper() for p in config.get_shadow_profiles()]:
+        return jsonify({"error": f"Shadow '{name}' already exists — remove it first"}), 400
+
+    ov = snap.get("overrides") or {}
+
+    if _shadow_toml_exists():
+        # TOML path
+        ov_to_toml = {
+            "spot_rsi_period":              "rsi_period",
+            "spot_rsi_oversold":            "rsi_oversold",
+            "spot_rsi_overbought":          "rsi_overbought",
+            "spot_take_profit_pct":         "take_profit_pct",
+            "spot_trailing_stop_pct":       "trailing_stop_pct",
+            "spot_profit_floor_pct":        "profit_floor_pct",
+            "spot_min_exit_profit_pct":     "min_exit_profit_pct",
+            "spot_ema_gap_pct":             "ema_gap_pct",
+            "spot_dca_max":                 "dca_max",
+            "spot_dca_drop_pct":            "dca_drop_pct",
+            "spot_dca_size_pct":            "dca_size_pct",
+            "spot_hard_stop_pct":           "hard_stop_pct",
+            "spot_time_stop_days":          "time_stop_days",
+            "spot_stop_cooldown_candles":   "stop_cooldown_candles",
+            "spot_balance":                 "balance",
+            "spot_position_size_pct":       "position_size_pct",
+            "spot_partial_close_pct":       "partial_close_pct",
+            "spot_partial_close_trail_pct": "partial_close_trail_pct",
+        }
+        section: dict = {}
+        pairs = snap.get("pairs") or []
+        if pairs:
+            section["pairs"] = pairs
+        if ov.get("interval"):
+            section["interval"] = ov["interval"]
+        for internal_key, toml_key in ov_to_toml.items():
+            val = ov.get(internal_key)
+            if val is not None:
+                section[toml_key] = val
+        try:
+            _add_shadow_to_toml(name, section)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        # Legacy .env path
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        try:
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
+
+        new_lines = []
+        profiles_updated = False
+        for line in lines:
+            if line.startswith("SPOT_SHADOW_PROFILES="):
+                stripped = line.rstrip()
+                inline_comment = ""
+                if " #" in stripped:
+                    idx = stripped.index(" #")
+                    inline_comment = stripped[idx:]
+                    stripped = stripped[:idx]
+                new_lines.append(stripped + f",{name}" + inline_comment + "\n")
+                profiles_updated = True
+            else:
+                new_lines.append(line)
+        if not profiles_updated:
+            new_lines.append(f"SPOT_SHADOW_PROFILES={name}\n")
+
+        prefix = f"SPOT_SHADOW_{name}_"
+        ov_to_env = {
+            "spot_rsi_period":              "RSI_PERIOD",
+            "spot_rsi_oversold":            "RSI_OVERSOLD",
+            "spot_rsi_overbought":          "RSI_OVERBOUGHT",
+            "spot_take_profit_pct":         "TAKE_PROFIT_PCT",
+            "spot_trailing_stop_pct":       "TRAILING_STOP_PCT",
+            "spot_profit_floor_pct":        "PROFIT_FLOOR_PCT",
+            "spot_min_exit_profit_pct":     "MIN_EXIT_PROFIT_PCT",
+            "spot_ema_gap_pct":             "EMA_GAP_PCT",
+            "spot_dca_max":                 "DCA_MAX",
+            "spot_dca_drop_pct":            "DCA_DROP_PCT",
+            "spot_dca_size_pct":            "DCA_SIZE_PCT",
+            "spot_hard_stop_pct":           "HARD_STOP_PCT",
+            "spot_time_stop_days":          "TIME_STOP_DAYS",
+            "spot_stop_cooldown_candles":   "STOP_COOLDOWN_CANDLES",
+            "spot_balance":                 "BALANCE",
+            "spot_position_size_pct":       "POSITION_SIZE_PCT",
+            "spot_partial_close_pct":       "PARTIAL_CLOSE_PCT",
+            "spot_partial_close_trail_pct": "PARTIAL_CLOSE_TRAIL_PCT",
+        }
+        int_keys = {"spot_rsi_period", "spot_rsi_oversold", "spot_rsi_overbought", "spot_dca_max",
+                    "spot_time_stop_days", "spot_stop_cooldown_candles"}
+        block = [f"\n# Shadow: {name} (restored from archive)\n"]
+        pairs = snap.get("pairs") or []
+        if pairs:
+            block.append(f"{prefix}PAIRS={','.join(pairs)}\n")
+        if ov.get("interval"):
+            block.append(f"{prefix}INTERVAL={ov['interval']}\n")
+        for k, suffix in ov_to_env.items():
+            val = ov.get(k)
+            if val is not None:
+                if k in int_keys:
+                    block.append(f"{prefix}{suffix}={int(val)}\n")
+                else:
+                    block.append(f"{prefix}{suffix}={float(val)}\n")
+        new_lines.extend(block)
+
+        try:
+            with open(env_path, "w") as f:
+                f.writelines(new_lines)
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
+
     if os.environ.get("CAIRN_DASHBOARD_ONLY"):
         _queue_command(_SPOT_COMMANDS_PATH, {"action": "reload_shadows"})
         return jsonify({"ok": True, "queued": True, "name": name})

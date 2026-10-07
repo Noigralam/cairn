@@ -205,6 +205,12 @@ The bot reads `.env` only on startup. Any change requires a restart:
 ./stop.sh && ./start.sh
 ```
 
+**Upgrading from an older version (shadow config migration)**
+Shadow profiles used to be configured via `SPOT_SHADOW_*` variables in `.env`. They are now stored in `shadows.toml`. If you pull an update and your shadows disappear, run the migration script once — it reads the old vars from `.env`, writes `shadows.toml`, and tells you which lines to remove:
+```bash
+python3 tools/migrate_shadows.py
+```
+
 **Locked out of the dashboard PIN**
 Too many wrong PIN attempts locks the offending IP. To unlock:
 ```bash

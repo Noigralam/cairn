@@ -20,8 +20,11 @@ Dashboard process entry point. Sets `CAIRN_DASHBOARD_ONLY=1` before importing an
 ### `bot/__init__.py` *(1 line)*
 Just `__version__`. Imported wherever the version string is needed — snapshots, log formatter, dashboard header.
 
-### `bot/config.py` *(316 lines)*
-Reads all settings from `.env` via `python-dotenv`. Exports every constant (`SPOT_MODE`, `FUTURES_LEVERAGE`, etc.) and per-pair helper functions (`rsi_period_for(pair)`, `ema_gap_for(pair)`, `futures_rsi_oversold_for(sym)`, etc.) that look up pair-specific overrides and fall back to globals. Also parses shadow profile definitions from env vars.
+### `bot/config.py`
+Reads all settings from `.env` via `python-dotenv`. Exports every constant (`SPOT_MODE`, `FUTURES_LEVERAGE`, etc.) and per-pair helper functions (`rsi_period_for(pair)`, `ema_gap_for(pair)`, `futures_rsi_oversold_for(sym)`, etc.) that look up pair-specific overrides and fall back to globals. Shadow profile definitions are read from `shadows.toml` via `bot/shadows_config.py`; falls back to legacy `SPOT_SHADOW_*` env vars with a one-time warning if `shadows.toml` is absent.
+
+### `bot/shadows_config.py`
+Thin TOML I/O module for `shadows.toml`. `load()` returns the parsed dict (empty dict if file absent). `save(data)` writes atomically via a temp-file rename so a crash mid-write never corrupts the file. No imports from other bot modules — safe to call from both engine and dashboard processes.
 
 ### `bot/strategy.py` *(84 lines)*
 The shared signal brain. `compute_signal()` takes a candle DataFrame and returns a `SignalResult` with the RSI value, EMA200 trend line, signal direction (`BUY` / `SELL` / `HOLD`), and a human-readable reason string. Used identically by the spot engine, futures engine, all shadows, and the dashboard's signal endpoints.
@@ -75,8 +78,8 @@ Futures trading loop, same two-thread structure as spot: 15-minute signal loop a
 ### `web/__init__.py` *(0 lines)*
 Empty — marks `web/` as a package.
 
-### `web/app.py` *(2 272 lines)*
-The Flask dashboard. ~50 API endpoints covering: spot and futures status (read from JSON snapshots), trades, balance history, signals, charts (OHLCV + RSI + EMA200 + Bollinger Bands + actual trade markers), shadow profile status/trades/signals/charts, futures shadow ranking, FIFO tax summary/export/integrity/rebuild, Fear & Greed index, and recent log. Backtest API: `/api/backtest/run`, `/api/backtest/sweep`, `/api/backtest/fullsweep`, `/api/backtest/randomsearch`, `/api/backtest/2axissweep`, `/api/backtest/optimize` — all async (return a job_id, polled via `/api/backtest/<job_id>`). Shadow creation endpoint writes a new profile block to `.env` on the fly. Control endpoints (`/api/control`, `/api/futures/control`) return HTTP 503 when `CAIRN_DASHBOARD_ONLY=1`. PIN-gated actions use a lockout file to rate-limit brute force. Version badge in the dashboard header reflects the running dashboard process (`__version__`), not the engine snapshot.
+### `web/app.py`
+The Flask dashboard. ~50 API endpoints covering: spot and futures status (read from JSON snapshots), trades, balance history, signals, charts (OHLCV + RSI + EMA200 + Bollinger Bands + actual trade markers), shadow profile status/trades/signals/charts, futures shadow ranking, FIFO tax summary/export/integrity/rebuild, Fear & Greed index, and recent log. Backtest API: `/api/backtest/run`, `/api/backtest/sweep`, `/api/backtest/fullsweep`, `/api/backtest/randomsearch`, `/api/backtest/2axissweep`, `/api/backtest/optimize` — all async (return a job_id, polled via `/api/backtest/<job_id>`). Shadow create/remove/restore endpoints write to `shadows.toml` (falling back to `.env` editing if `shadows.toml` does not exist). Archive endpoints expose the `archived_shadow_snapshots` table. Control endpoints (`/api/control`, `/api/futures/control`) return HTTP 503 when `CAIRN_DASHBOARD_ONLY=1`. PIN-gated actions use a lockout file to rate-limit brute force. Version badge reflects the running dashboard process (`__version__`), not the engine snapshot.
 
 ---
 

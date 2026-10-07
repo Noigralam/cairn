@@ -963,6 +963,7 @@
             <h3 id="sh-archive-detail-title" style="margin:0"></h3>
             <div style="display:flex;gap:8px">
               <button onclick="copyArchiveEnv()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">Copy .env config</button>
+              <button onclick="restoreArchivedShadow()" style="background:none;border:1px solid #1f6feb;border-radius:5px;color:#58a6ff;font-size:12px;padding:3px 9px;cursor:pointer">Restore Shadow</button>
               <button onclick="closeArchiveDetail()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">✕ Close</button>
             </div>
           </div>
@@ -2446,7 +2447,8 @@
         ? `<span style="font-size:11px;background:var(--card);color:#d29922;padding:1px 6px;border-radius:3px;margin-right:6px">MAIN SIM</span>`
         : `<span style="font-size:11px;background:var(--card);color:#3fb950;padding:1px 6px;border-radius:3px;margin-right:6px">SPOT</span>`;
       const resetBtn  = s.is_main ? '' :
-        `<button onclick="resetShadow('${escHtml(s.name)}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;padding:2px 7px;cursor:pointer" title="Reset shadow">Reset</button>`;
+        `<button onclick="resetShadow('${escHtml(s.name)}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;padding:2px 7px;cursor:pointer" title="Reset shadow">Reset</button>` +
+        `<button onclick="archiveRemoveShadow('${escHtml(s.name)}')" style="background:none;border:1px solid #6e2020;border-radius:4px;color:#f85149;font-size:11px;padding:2px 7px;cursor:pointer;margin-left:4px" title="Archive trades and permanently remove shadow">Archive &amp; Remove</button>`;
       return `<tr${s.is_main ? ' style="border-left:2px solid #d29922"' : ''}>
         <td style="color:var(--muted)">${i + 1}</td>
         <td>${badge}<span style="${nameStyle}" onclick="switchShadow('${escHtml(s.name)}')">${escHtml(s.name)}</span></td>
@@ -2467,6 +2469,17 @@
       const res  = await fetch(`/api/shadows/${encodeURIComponent(name)}/reset`, {method: 'POST', headers: _pinHeaders()});
       const data = await res.json();
       if (data.queued) { alert('Reset queued — will apply within 30s.'); }
+      else if (data.ok) { location.reload(); }
+      else { alert('Error: ' + (data.error || 'unknown')); }
+    } catch(e) { alert('Request failed: ' + e); }
+  }
+
+  async function archiveRemoveShadow(name) {
+    if (!confirm(`Archive & remove shadow ${name}?\n\nAll trades will be saved to the archive, then the shadow will be permanently removed.`)) return;
+    try {
+      const res  = await fetch(`/api/shadows/${encodeURIComponent(name)}/archive_remove`, {method: 'POST', headers: _pinHeaders()});
+      const data = await res.json();
+      if (data.queued) { alert('Archive & remove queued — will apply within 30s.'); location.reload(); }
       else if (data.ok) { location.reload(); }
       else { alert('Error: ' + (data.error || 'unknown')); }
     } catch(e) { alert('Request failed: ' + e); }
@@ -5347,6 +5360,19 @@ _initLock();
   function closeArchiveDetail() {
     document.getElementById('sh-archive-detail').style.display = 'none';
     _activeArchiveId = null;
+  }
+
+  async function restoreArchivedShadow() {
+    const title = document.getElementById('sh-archive-detail-title').textContent;
+    if (!confirm(`Restore shadow "${title}"?\n\nThis adds it back to .env and reloads the engine. Archived trades remain in the archive.`)) return;
+    try {
+      const res  = await fetch(`/api/archive/${_activeArchiveId}/restore`, {method: 'POST', headers: _pinHeaders()});
+      const data = await res.json();
+      if (data.error) { alert('Error: ' + data.error); return; }
+      if (data.queued) { alert(`Shadow "${data.name}" restore queued — will appear within 30s.`); }
+      else { alert(`Shadow "${data.name}" restored.`); }
+      location.reload();
+    } catch(e) { alert('Request failed: ' + e); }
   }
 
   function copyArchiveEnv() {

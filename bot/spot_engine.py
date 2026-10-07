@@ -321,6 +321,16 @@ def _process_commands():
                     from .spot_simulator import reload_spot_shadows
                     reload_spot_shadows()
                     log.info("[CMD] Shadow list reloaded from config")
+                elif action == "archive_remove":
+                    name = cmd.get("name", "").upper()
+                    from .spot_simulator import get_spot_shadows, reload_spot_shadows
+                    for sh in get_spot_shadows():
+                        if sh.name.upper() == name:
+                            sh.reset()
+                            log.info(f"[CMD] Archived shadow {sh.name} before removal")
+                            break
+                    reload_spot_shadows()
+                    log.info(f"[CMD] Shadow list reloaded after archive_remove of {name}")
                 elif action == "resume":
                     resume()
                     log.info("[CMD] Bot resumed via command queue")

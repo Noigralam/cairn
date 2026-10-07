@@ -160,12 +160,11 @@ def futures_ema_gap_for(pair: str) -> float:
 # Shadow simulation profiles
 # ---------------------------------------------------------------------------
 
-def get_shadow_profiles() -> list[str]:
-    raw = os.getenv("SPOT_SHADOW_PROFILES", "")
-    return [p.strip().upper() for p in raw.split(",") if p.strip()]
+_spot_toml_warned = False
+_fut_toml_warned  = False
 
 
-def get_shadow_overrides(name: str) -> dict:
+def _get_shadow_overrides_legacy(name: str) -> dict:
     """Parse SPOT_SHADOW_{NAME}_* env vars into an overrides dict for SpotShadowSimulator."""
     prefix = f"SPOT_SHADOW_{name.upper()}_"
     # fmt: off  (keep columns aligned for readability)
@@ -222,12 +221,87 @@ def get_shadow_overrides(name: str) -> dict:
     return result
 
 
-def get_futures_shadow_profiles() -> list[str]:
-    raw = os.getenv("FUTURES_SHADOW_PROFILES", "")
+def _parse_spot_overrides(raw: dict) -> dict:
+    """Map TOML section keys to internal overrides dict keys for SpotShadowSimulator."""
+    # fmt: off
+    _toml_map: dict[str, tuple[str, type]] = {
+        "rsi_oversold":            ("spot_rsi_oversold",            int),
+        "rsi_overbought":          ("spot_rsi_overbought",          int),
+        "rsi_period":              ("spot_rsi_period",              int),
+        "ema_gap_pct":             ("spot_ema_gap_pct",             float),
+        "trailing_stop_pct":       ("spot_trailing_stop_pct",       float),
+        "profit_floor_pct":        ("spot_profit_floor_pct",        float),
+        "take_profit_pct":         ("spot_take_profit_pct",         float),
+        "min_exit_profit_pct":     ("spot_min_exit_profit_pct",     float),
+        "time_stop_days":          ("spot_time_stop_days",          float),
+        "stop_cooldown_candles":   ("spot_stop_cooldown_candles",   int),
+        "reentry_drop_pct":        ("spot_reentry_drop_pct",        float),
+        "partial_close_pct":       ("spot_partial_close_pct",       float),
+        "partial_close_trail_pct": ("spot_partial_close_trail_pct", float),
+        "hard_stop_pct":           ("spot_hard_stop_pct",           float),
+        "position_size_pct":       ("spot_position_size_pct",       float),
+        "dca_drop_pct":            ("spot_dca_drop_pct",            float),
+        "dca_size_pct":            ("spot_dca_size_pct",            float),
+        "dca_max":                 ("spot_dca_max",                 int),
+        "dca_step_pct":            ("spot_dca_step_pct",            float),
+        "volume_filter_period":    ("spot_volume_filter_period",    int),
+        "volume_filter_mult":      ("spot_volume_filter_mult",      float),
+        "balance":                 ("spot_balance",                 float),
+        "grid_spacing":            ("spot_grid_spacing",            float),
+        "grid_levels":             ("spot_grid_levels",             int),
+    }
+    # fmt: on
+    result: dict = {}
+    for toml_key, (internal_key, cast) in _toml_map.items():
+        val = raw.get(toml_key)
+        if val is not None:
+            try:
+                result[internal_key] = cast(val)
+            except (ValueError, TypeError):
+                pass
+    # pairs: list or comma-separated string
+    pairs = raw.get("pairs")
+    if pairs is not None:
+        if isinstance(pairs, list):
+            result["pairs"] = [str(p).strip().upper() for p in pairs if str(p).strip()]
+        elif isinstance(pairs, str) and pairs.strip():
+            result["pairs"] = [p.strip().upper() for p in pairs.split(",") if p.strip()]
+    interval = raw.get("interval")
+    if interval:
+        result["interval"] = str(interval).strip()
+    type_val = raw.get("type")
+    if type_val:
+        result["type"] = str(type_val).lower().strip()
+    return result
+
+
+def get_shadow_profiles() -> list[str]:
+    global _spot_toml_warned
+    from . import shadows_config
+    data = shadows_config.load()
+    if "spot" in data:
+        return [p.strip().upper() for p in data["spot"].get("profiles", [])]
+    if not _spot_toml_warned:
+        import logging
+        logging.getLogger(__name__).warning(
+            "shadows.toml not found — reading spot shadow profiles from .env (legacy). "
+            "Run: python3 tools/migrate_shadows.py"
+        )
+        _spot_toml_warned = True
+    raw = os.getenv("SPOT_SHADOW_PROFILES", "")
     return [p.strip().upper() for p in raw.split(",") if p.strip()]
 
 
-def get_futures_shadow_overrides(name: str) -> dict:
+def get_shadow_overrides(name: str) -> dict:
+    from . import shadows_config
+    data = shadows_config.load()
+    if "spot" not in data:
+        return _get_shadow_overrides_legacy(name)
+    raw = data["spot"].get(name.upper(), {})
+    return _parse_spot_overrides(raw)
+
+
+def _get_futures_shadow_overrides_legacy(name: str) -> dict:
     """Parse FUTURES_SHADOW_{NAME}_* env vars into an overrides dict for FuturesShadowSimulator."""
     prefix = f"FUTURES_SHADOW_{name.upper()}_"
     # fmt: off
@@ -263,6 +337,68 @@ def get_futures_shadow_overrides(name: str) -> dict:
     if symbols_raw:
         result["symbols"] = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
     return result
+
+
+def _parse_futures_overrides(raw: dict) -> dict:
+    """Map TOML section keys to internal overrides dict keys for FuturesShadowSimulator."""
+    # fmt: off
+    _toml_map: dict[str, tuple[str, type]] = {
+        "leverage":          ("futures_leverage",           int),
+        "position_size_pct": ("futures_position_size_pct", float),
+        "max_funding_rate":  ("futures_max_funding_rate",  float),
+        "take_profit_pct":   ("futures_take_profit_pct",   float),
+        "trailing_stop_pct": ("futures_trailing_stop_pct", float),
+        "profit_floor_pct":  ("futures_profit_floor_pct",  float),
+        "dca_drop_pct":      ("futures_dca_drop_pct",      float),
+        "dca_size_pct":      ("futures_dca_size_pct",      float),
+        "rsi_oversold":      ("futures_rsi_oversold",      int),
+        "rsi_overbought":    ("futures_rsi_overbought",    int),
+        "rsi_period":        ("futures_rsi_period",        int),
+        "ema_gap_pct":       ("futures_ema_gap_pct",       float),
+        "balance":           ("futures_balance",           float),
+    }
+    # fmt: on
+    result: dict = {}
+    for toml_key, (internal_key, cast) in _toml_map.items():
+        val = raw.get(toml_key)
+        if val is not None:
+            try:
+                result[internal_key] = cast(val)
+            except (ValueError, TypeError):
+                pass
+    symbols = raw.get("symbols")
+    if symbols is not None:
+        if isinstance(symbols, list):
+            result["symbols"] = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        elif isinstance(symbols, str) and symbols.strip():
+            result["symbols"] = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return result
+
+
+def get_futures_shadow_profiles() -> list[str]:
+    global _fut_toml_warned
+    from . import shadows_config
+    data = shadows_config.load()
+    if "futures" in data:
+        return [p.strip().upper() for p in data["futures"].get("profiles", [])]
+    if not _fut_toml_warned:
+        import logging
+        logging.getLogger(__name__).warning(
+            "shadows.toml not found — reading futures shadow profiles from .env (legacy). "
+            "Run: python3 tools/migrate_shadows.py"
+        )
+        _fut_toml_warned = True
+    raw = os.getenv("FUTURES_SHADOW_PROFILES", "")
+    return [p.strip().upper() for p in raw.split(",") if p.strip()]
+
+
+def get_futures_shadow_overrides(name: str) -> dict:
+    from . import shadows_config
+    data = shadows_config.load()
+    if "futures" not in data:
+        return _get_futures_shadow_overrides_legacy(name)
+    raw = data["futures"].get(name.upper(), {})
+    return _parse_futures_overrides(raw)
 
 # ---------------------------------------------------------------------------
 # Web dashboard

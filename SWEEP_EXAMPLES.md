@@ -29,18 +29,19 @@ The baseline (RSI 14) was weak — roughly +€55 over 730 days. `pair_sweep.py`
 .venv/bin/python backtest.py sweep rsi_buy 730 365 180 --cached
 ```
 
-RSI period=7 with buy<30 and sell>75 came out significantly ahead (+€272 vs +€55 over 730d). That became **NEAR2**:
+RSI period=7 with buy<30 and sell>75 came out significantly ahead (+€272 vs +€55 over 730d). That became **NEAR2** — add to `shadows.toml`:
 
-```
-SPOT_SHADOW_NEAR2_PAIRS=NEAREUR
-SPOT_SHADOW_NEAR2_RSI_PERIOD=7
-SPOT_SHADOW_NEAR2_RSI_OVERSOLD=30
-SPOT_SHADOW_NEAR2_RSI_OVERBOUGHT=75
-SPOT_SHADOW_NEAR2_TRAILING_STOP_PCT=0.025
-SPOT_SHADOW_NEAR2_PROFIT_FLOOR_PCT=0.02
-SPOT_SHADOW_NEAR2_MIN_EXIT_PROFIT_PCT=0.01
-SPOT_SHADOW_NEAR2_TAKE_PROFIT_PCT=0.03
-SPOT_SHADOW_NEAR2_DCA_MAX=3
+```toml
+[spot.NEAR2]
+pairs               = ["NEAREUR"]
+rsi_period          = 7
+rsi_oversold        = 30
+rsi_overbought      = 75
+trailing_stop_pct   = 0.025
+profit_floor_pct    = 0.02
+min_exit_profit_pct = 0.01
+take_profit_pct     = 0.03
+dca_max             = 3
 ```
 
 The original **NEAR** profile (global defaults, RSI 14) was kept running as a control.
@@ -63,18 +64,19 @@ DCA=0 (all-in, no averaging) outperformed DCA=3 on SOLEUR over 180d. Then tighte
 .venv/bin/python backtest.py sweep rsi_sell 180 90 --cached
 ```
 
-sell>65 captured recoveries earlier without sacrificing much on big runs. That became **ACTIVE** (SOL+ETH) and **ACTIVE_SOL**:
+sell>65 captured recoveries earlier without sacrificing much on big runs. That became **ACTIVE** (SOL+ETH) and **ACTIVE_SOL** — add to `shadows.toml`:
 
-```
-SPOT_SHADOW_ACTIVE_PAIRS=SOLEUR,ETHEUR
-SPOT_SHADOW_ACTIVE_RSI_OVERSOLD=33
-SPOT_SHADOW_ACTIVE_RSI_OVERBOUGHT=65
-SPOT_SHADOW_ACTIVE_DCA_MAX=0
-SPOT_SHADOW_ACTIVE_TAKE_PROFIT_PCT=0.05
-SPOT_SHADOW_ACTIVE_TRAILING_STOP_PCT=0.025
-SPOT_SHADOW_ACTIVE_PROFIT_FLOOR_PCT=0.015
-SPOT_SHADOW_ACTIVE_MIN_EXIT_PROFIT_PCT=0.01
-SPOT_SHADOW_ACTIVE_EMA_GAP_PCT=0.0
+```toml
+[spot.ACTIVE]
+pairs               = ["SOLEUR", "ETHEUR"]
+rsi_oversold        = 33
+rsi_overbought      = 65
+dca_max             = 0
+take_profit_pct     = 0.05
+trailing_stop_pct   = 0.025
+profit_floor_pct    = 0.015
+min_exit_profit_pct = 0.01
+ema_gap_pct         = 0.0
 ```
 
 **HYBRID** came from the same sweep session — it kept DCA=2 as a middle ground with the same RSI(7)+floor settings, and is compared against ACTIVE in the shadow ranking to see whether averaging down earns its capital cost.
@@ -105,20 +107,21 @@ RSI(14) with buy<35 and sell>70 fitted the 4h rhythm. Trailing stop needed to be
 .venv/bin/python backtest.py sweep floor_pct 730 365 --cached
 ```
 
-trail=3.5%, floor=2%, TP=7% came out ahead consistently. That became **SOL4H**:
+trail=3.5%, floor=2%, TP=7% came out ahead consistently. That became **SOL4H** — add to `shadows.toml`:
 
-```
-SPOT_SHADOW_SOL4H_PAIRS=SOLEUR
-SPOT_SHADOW_SOL4H_INTERVAL=4h
-SPOT_SHADOW_SOL4H_RSI_PERIOD=14
-SPOT_SHADOW_SOL4H_RSI_OVERSOLD=35
-SPOT_SHADOW_SOL4H_RSI_OVERBOUGHT=70
-SPOT_SHADOW_SOL4H_TRAILING_STOP_PCT=0.035
-SPOT_SHADOW_SOL4H_PROFIT_FLOOR_PCT=0.02
-SPOT_SHADOW_SOL4H_MIN_EXIT_PROFIT_PCT=0.015
-SPOT_SHADOW_SOL4H_TAKE_PROFIT_PCT=0.07
-SPOT_SHADOW_SOL4H_DCA_MAX=0
-SPOT_SHADOW_SOL4H_EMA_GAP_PCT=0.0
+```toml
+[spot.SOL4H]
+pairs               = ["SOLEUR"]
+interval            = "4h"
+rsi_period          = 14
+rsi_oversold        = 35
+rsi_overbought      = 70
+trailing_stop_pct   = 0.035
+profit_floor_pct    = 0.02
+min_exit_profit_pct = 0.015
+take_profit_pct     = 0.07
+dca_max             = 0
+ema_gap_pct         = 0.0
 ```
 
 SOL4H_FNG, SOL4H_FNG_CD, and SOL4H_FNG_CDT were added on top of these settings to test re-entry cooldowns without re-doing the base param search. (The fear & greed gate those profiles used — `FNG_MAX` — has since been removed from the shadow override map; RSI already captures sentiment sufficiently.)
@@ -140,12 +143,13 @@ The baseline futures engine uses TP=5% and trail=5%. The question was whether a 
 .venv/bin/python backtest_futures.py sweep trail 365 180 --cached
 ```
 
-TP=10% with trail=8% and floor=3% outperformed the baseline on the 365d window by capturing the big runs that were exiting too early. That became **HIGH_TP**:
+TP=10% with trail=8% and floor=3% outperformed the baseline on the 365d window by capturing the big runs that were exiting too early. That became **HIGH_TP** — add to `shadows.toml`:
 
-```
-FUTURES_SHADOW_HIGH_TP_TAKE_PROFIT_PCT=0.10
-FUTURES_SHADOW_HIGH_TP_TRAILING_STOP_PCT=0.08
-FUTURES_SHADOW_HIGH_TP_PROFIT_FLOOR_PCT=0.03
+```toml
+[futures.HIGH_TP]
+take_profit_pct   = 0.10
+trailing_stop_pct = 0.08
+profit_floor_pct  = 0.03
 ```
 
 It runs both ETHUSDT and SOLUSDT (same as MAIN) to keep the comparison clean.
@@ -154,7 +158,7 @@ It runs both ETHUSDT and SOLUSDT (same as MAIN) to keep the comparison clean.
 
 ## Comparing all shadow profiles at once
 
-Once you've added a new shadow to `.env`, run the full shadow comparison across multiple windows to see where it ranks:
+Once you've added a new shadow to `shadows.toml` and restarted the engine, run the full shadow comparison across multiple windows to see where it ranks:
 
 ```bash
 # All spot shadows ranked — 365d, 180d, 90d
@@ -249,7 +253,7 @@ The first integer is the random trial count (default 200 if omitted); remaining 
 # 5. Validate the combined settings with a full shadow comparison
 .venv/bin/python backtest.py shadows 365 180 90 --cached
 
-# 6. Add a shadow profile to .env, restart engine, and let it run live
+# 6. Add a shadow profile to shadows.toml, restart engine, and let it run live
 ./stop.sh engine && ./start.sh engine
 ```
 

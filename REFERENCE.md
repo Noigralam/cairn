@@ -227,30 +227,69 @@ When `SPOT_DCA_MAX` is 0 for a pair, the bot goes all-in on entry. The last DCA 
 
 Shadow profiles run paper-trade simulations alongside the live bot using the same candle feed. Each profile has its own virtual balance, state file, and parameter set. This makes them the ideal way to validate candidate settings in real market conditions before promoting them to live — add a shadow with your proposed parameters, let it run for a few days, and compare its equity curve and trade log against the live bot in the dashboard's Shadow tab.
 
-Enable with `SPOT_SHADOW_PROFILES=PROFILE1,PROFILE2,...`. Each profile supports the following overrides (prefix `SPOT_SHADOW_<NAME>_`):
+Shadow profiles are configured in **`shadows.toml`** in the repo root (not in `.env`). On a fresh install the file does not exist — create it manually or run the migration script if upgrading from an older version that used `.env` shadow vars:
 
-| Suffix | Description |
+```bash
+python3 tools/migrate_shadows.py
+```
+
+**`shadows.toml` format:**
+
+```toml
+[spot]
+profiles = ["FAST", "CONSERVATIVE"]
+
+[spot.FAST]
+pairs   = ["SOLEUR"]
+balance = 200.0
+rsi_period          = 7
+rsi_oversold        = 25
+take_profit_pct     = 0.03
+trailing_stop_pct   = 0.02
+profit_floor_pct    = 0.01
+min_exit_profit_pct = 0.01
+dca_max = 0
+
+[spot.CONSERVATIVE]
+pairs        = ["ETHEUR"]
+rsi_oversold = 33
+ema_gap_pct  = 0.02
+
+[futures]
+profiles = ["HIGH_TP"]
+
+[futures.HIGH_TP]
+take_profit_pct   = 0.10
+trailing_stop_pct = 0.08
+profit_floor_pct  = 0.03
+```
+
+Every key is optional — omitted keys fall back to the live bot's global defaults. Available keys per spot shadow:
+
+| Key | Description |
 |---|---|
-| `PAIRS` | Comma-separated pairs to trade |
-| `INTERVAL` | Candle interval (defaults to `SPOT_INTERVAL`) |
-| `BALANCE` | Starting virtual balance (quote currency) |
-| `RSI_PERIOD` / `RSI_OVERSOLD` / `RSI_OVERBOUGHT` | RSI parameters |
-| `EMA_GAP_PCT` | EMA gap filter |
-| `TAKE_PROFIT_PCT` | Take-profit target |
-| `TRAILING_STOP_PCT` / `PROFIT_FLOOR_PCT` | Trailing stop parameters |
-| `MIN_EXIT_PROFIT_PCT` | Min profit before signal sell fires |
-| `DCA_MAX` / `DCA_DROP_PCT` / `DCA_STEP_PCT` / `DCA_SIZE_PCT` | DCA parameters |
-| `POSITION_SIZE_PCT` | Fraction of balance per trade |
-| `TIME_STOP_DAYS` | Time stop (0 = off) |
-| `HARD_STOP_PCT` | Hard stop loss below entry price (0 = off) |
-| `STOP_COOLDOWN_CANDLES` | Re-entry cooldown after trailing stop |
-| `REENTRY_DROP_PCT` | Re-entry price gate after a stop |
-| `PARTIAL_CLOSE_PCT` / `PARTIAL_CLOSE_TRAIL_PCT` | Partial close parameters |
-| `VOLUME_FILTER_PERIOD` / `VOLUME_FILTER_MULT` | Volume filter |
-| `TYPE=grid` | Grid strategy instead of RSI mean-reversion |
-| `GRID_SPACING` / `GRID_LEVELS` | Grid parameters (only used when `TYPE=grid`) |
+| `pairs` | List of pairs to trade |
+| `interval` | Candle interval (defaults to `SPOT_INTERVAL`) |
+| `balance` | Starting virtual balance (quote currency) |
+| `rsi_period` / `rsi_oversold` / `rsi_overbought` | RSI parameters |
+| `ema_gap_pct` | EMA gap filter (negative value disables the filter entirely) |
+| `take_profit_pct` | Take-profit target |
+| `trailing_stop_pct` / `profit_floor_pct` | Trailing stop parameters |
+| `min_exit_profit_pct` | Min profit before signal sell fires |
+| `dca_max` / `dca_drop_pct` / `dca_step_pct` / `dca_size_pct` | DCA parameters |
+| `position_size_pct` | Fraction of balance per trade |
+| `time_stop_days` | Time stop (0 = off) |
+| `hard_stop_pct` | Hard stop loss below entry price (0 = off) |
+| `stop_cooldown_candles` | Re-entry cooldown after trailing stop fires |
+| `reentry_drop_pct` | Re-entry price gate after a stop |
+| `partial_close_pct` / `partial_close_trail_pct` | Partial close parameters |
+| `volume_filter_period` / `volume_filter_mult` | Volume filter |
+| `type = "grid"` | Grid strategy instead of RSI mean-reversion |
+| `grid_spacing` / `grid_levels` | Grid parameters (only used when `type = "grid"`) |
 
-`SPOT_SHADOW_DEFAULT_BALANCE` sets the starting balance for any new shadow that has no existing state and no explicit `BALANCE` override (default: `200.0`).
+`SPOT_SHADOW_DEFAULT_BALANCE` in `.env` sets the starting balance for any new shadow that has no existing state and no explicit `balance` key (default: `200.0`).
+
+The dashboard's Shadow tab shows all profiles ranked by return. Individual profiles can be reset, archived, or permanently removed using the **Reset**, **Archive & Remove**, and **Restore Shadow** buttons — no manual `shadows.toml` editing needed for day-to-day management.
 
 
 ### Futures
@@ -281,7 +320,7 @@ Enable with `SPOT_SHADOW_PROFILES=PROFILE1,PROFILE2,...`. Each profile supports 
 
 Per-pair overrides: append the symbol, e.g. `FUTURES_RSI_PERIOD_ETHUSDT=7`.
 
-Futures shadows use `FUTURES_SHADOW_PROFILES` and `FUTURES_SHADOW_<NAME>_` prefixes. `FUTURES_SHADOW_DEFAULT_BALANCE` sets the starting balance for new futures shadows (default: `200.0`).
+Futures shadows are configured in `shadows.toml` under `[futures]` and `[futures.<NAME>]` sections (same format as spot shadows). Available keys mirror the `FUTURES_*` env vars above, lowercased without the prefix (e.g. `leverage`, `take_profit_pct`, `rsi_oversold`, `balance`). `FUTURES_SHADOW_DEFAULT_BALANCE` in `.env` sets the starting balance for new futures shadows (default: `200.0`).
 
 ### Credentials & dashboard
 
@@ -361,7 +400,7 @@ Most parameters can be left at their defaults. The ones below have the biggest i
 
 4. **Watch out for overfitting** — a setting that ranks first over one 180-day window may not generalise. Run the same sweep over multiple windows (365d, 730d) and prefer values that are consistently good rather than occasionally excellent.
 
-4. **Validate with shadows before going live** — once you have candidate settings, add a shadow profile in `.env` with those values and let it run alongside the live bot for a few days in simulation. The dashboard's Shadow tab shows its equity curve and trades in real time. Only promote to live once it's behaving as expected.
+4. **Validate with shadows before going live** — once you have candidate settings, add a shadow profile in `shadows.toml` with those values and let it run alongside the live bot for a few days in simulation. The dashboard's Shadow tab shows its equity curve and trades in real time. Only promote to live once it's behaving as expected.
 
 ### Pairs: how to choose
 
@@ -370,7 +409,7 @@ Any Binance spot pair with your configured quote currency works. Practical consi
 - **Volume matters** — low-volume pairs have wide spreads and slippage the backtest doesn't model. Stick to pairs where the 24h volume is consistently above 1–2M in your quote currency.
 - **Volatility and RSI period go together** — high-volatility pairs need a shorter RSI period to react before the move is over.
 - **Start with one pair** — running multiple pairs ties up more capital per DCA tranche and makes it harder to understand what's driving results.
-- To evaluate a new pair before adding it to the live bot, add it as a shadow (`SPOT_SHADOW_MYPAIR_PAIRS=XRPEUR`) and backtest it with `pair_sweep.py XRPEUR` (substitute your actual pair).
+- To evaluate a new pair before adding it to the live bot, add it as a shadow in `shadows.toml` (`pairs = ["XRPEUR"]` under a new `[spot.MYPAIR]` section) and backtest it with `pair_sweep.py XRPEUR` (substitute your actual pair).
 
 ### What not to change
 
@@ -566,6 +605,7 @@ backtest_futures.py     — futures backtest + parameter sweep tool
 backtest_grid.py        — grid strategy backtest: spacing × levels sweep
 pair_sweep.py           — full parameter sweep for any single spot pair
 sweep_ranges.toml       — sweep axis value lists (12 values × 16 axes); edit freely
+shadows.toml            — shadow profile definitions (spot + futures); managed by the dashboard or edited directly
 main.py                 — engine entry point: spot engine, futures engine, Discord bot
 dashboard.py            — dashboard entry point: Flask web server only
 start.sh / stop.sh      — process management (engine, dashboard, or both)
