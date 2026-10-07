@@ -158,10 +158,12 @@ def _dispose_fifo(conn, trade_id, asset, pair, disposed_at, quantity, proceeds_e
              trade_id),
         )
 
-    # Zero out micro-residuals left by Binance SOL-fee deductions (gross lot qty
-    # slightly exceeds net wallet balance sold). These were never in the wallet.
+    # Zero out fee residuals: when Binance deducts fees in the base asset, the lot
+    # was created with gross qty but only net qty was ever sold. Residual ≤ 0.5%
+    # of original lot quantity is always a fee artefact, never a real holding.
     conn.execute(
-        "UPDATE tax_lots SET remaining = 0 WHERE asset = ? AND remaining < 0.02",
+        "UPDATE tax_lots SET remaining = 0 "
+        "WHERE asset = ? AND remaining > 0 AND remaining / quantity <= 0.005",
         (asset,),
     )
 
@@ -195,6 +197,30 @@ def rebuild():
             _add_lot(conn, trade_id, asset, pair, timestamp, amount, value_eur + fee_eur)
         elif side == "SELL":
             _dispose_fifo(conn, trade_id, asset, pair, timestamp, amount, value_eur, fee_eur)
+
+    # Zero out accumulated fee residuals for assets that are net-zero in the
+    # trades ledger. Binance sometimes deducts fees in the base asset, so the
+    # gross lot quantity is slightly larger than what lands in the wallet.
+    # Each buy-sell cycle leaves a small residual; over many cycles it adds up.
+    # If net(buy - sell) across all live trades is within 1% of total sell
+    # volume, the asset is effectively closed and any remaining is fee artefact.
+    net_qty: dict[str, float] = {}
+    sell_vol: dict[str, float] = {}
+    for trade_id, timestamp, pair, side, price, amount, value_eur, fee in trades:
+        asset = _asset(pair)
+        if side == "BUY":
+            net_qty[asset] = net_qty.get(asset, 0.0) + amount
+        elif side == "SELL":
+            net_qty[asset] = net_qty.get(asset, 0.0) - amount
+            sell_vol[asset] = sell_vol.get(asset, 0.0) + amount
+
+    for asset, net in net_qty.items():
+        threshold = sell_vol.get(asset, 0.0) * 0.01
+        if net <= threshold:
+            conn.execute(
+                "UPDATE tax_lots SET remaining = 0 WHERE asset = ? AND remaining > 0",
+                (asset,),
+            )
 
     conn.commit()
     conn.close()

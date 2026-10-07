@@ -274,13 +274,17 @@ def _open_position_locked(pair: str, price: float, size_pct: float = None, price
             order  = place_order(pair, "BUY", amount)
             fills  = order.get("fills", [])
             if fills:
-                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / sum(float(f["qty"]) for f in fills)
-                amount    = sum(float(f["qty"]) for f in fills)
+                gross_qty = sum(float(f["qty"]) for f in fills)
+                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / gross_qty
+                base_fee  = sum(float(f.get("commission", 0)) for f in fills
+                                if str(f.get("commissionAsset", "")).upper() == config.base_asset_for(pair))
+                amount    = gross_qty - base_fee   # net qty that lands in wallet
                 buy_fee   = _sum_fills_fee_eur(fills)
+                value     = gross_qty * avg_price  # actual EUR spent (gross)
             else:
                 avg_price = price
                 buy_fee   = amount * avg_price * SPOT_FEE
-            value    = amount * avg_price
+                value     = amount * avg_price
             tp_price = avg_price * (1 + config.take_profit_for(pair))
             log_trade(pair, "BUY", avg_price, amount, value, buy_fee, mode="live")
             pos      = Position(pair, avg_price, amount, value, tp_price, avg_price, opened_at=_time.time())
@@ -333,13 +337,17 @@ def _manual_add_locked(pair: str, price: float, size_pct: float):
             order  = place_order(pair, "BUY", amount)
             fills  = order.get("fills", [])
             if fills:
-                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / sum(float(f["qty"]) for f in fills)
-                amount    = sum(float(f["qty"]) for f in fills)
+                gross_qty = sum(float(f["qty"]) for f in fills)
+                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / gross_qty
+                base_fee  = sum(float(f.get("commission", 0)) for f in fills
+                                if str(f.get("commissionAsset", "")).upper() == config.base_asset_for(pair))
+                amount    = gross_qty - base_fee
                 buy_fee   = _sum_fills_fee_eur(fills)
+                value     = gross_qty * avg_price
             else:
                 avg_price = price
                 buy_fee   = amount * avg_price * SPOT_FEE
-            value = amount * avg_price
+                value     = amount * avg_price
             if pair not in _state.positions:
                 tp_price = avg_price * (1 + config.take_profit_for(pair))
                 pos = Position(pair, avg_price, amount, value, tp_price, avg_price, opened_at=_time.time())
@@ -420,10 +428,13 @@ def _dca_position_locked(pair: str, price: float, prices: dict | None = None):
             order  = place_order(pair, "BUY", amount)
             fills  = order.get("fills", [])
             if fills:
-                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / sum(float(f["qty"]) for f in fills)
-                bought    = sum(float(f["qty"]) for f in fills)
+                gross_qty = sum(float(f["qty"]) for f in fills)
+                avg_price = sum(float(f["price"]) * float(f["qty"]) for f in fills) / gross_qty
+                base_fee  = sum(float(f.get("commission", 0)) for f in fills
+                                if str(f.get("commissionAsset", "")).upper() == config.base_asset_for(pair))
+                bought    = gross_qty - base_fee
                 buy_fee   = _sum_fills_fee_eur(fills)
-                dca_value = bought * avg_price
+                dca_value = gross_qty * avg_price
             else:
                 avg_price = price
                 bought    = amount
