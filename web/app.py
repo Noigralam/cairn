@@ -2286,6 +2286,9 @@ def api_control():
                 cmd["size_pct"] = float(data.get("size_pct", 0.5))
             _queue_command(_SPOT_COMMANDS_PATH, cmd)
             return jsonify({"ok": True, "queued": True})
+        if action in ("resume", "pause"):
+            _queue_command(_SPOT_COMMANDS_PATH, {"action": action})
+            return jsonify({"ok": True, "queued": True})
         return jsonify({"error": "engine runs in a separate process — control not available via dashboard"}), 503
 
     if action == "ping":

@@ -321,6 +321,12 @@ def _process_commands():
                     from .spot_simulator import reload_spot_shadows
                     reload_spot_shadows()
                     log.info("[CMD] Shadow list reloaded from config")
+                elif action == "resume":
+                    resume()
+                    log.info("[CMD] Bot resumed via command queue")
+                elif action == "pause":
+                    pause()
+                    log.info("[CMD] Bot paused via command queue")
                 else:
                     log.warning(f"[SPOT CMD] Unknown action: {action!r}")
             except Exception as e:

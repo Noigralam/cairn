@@ -58,7 +58,7 @@ def compute_signal(
     ema_threshold = ema_t * (1 + ema_gap)
 
     if rsi < rsi_oversold:
-        if price < ema_threshold:
+        if ema_gap >= 0 and price < ema_threshold:
             reason = (
                 f"BUY blocked — price below EMA{ema_trend} (downtrend)"
                 if price < ema_t else
