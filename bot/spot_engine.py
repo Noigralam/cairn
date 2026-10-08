@@ -264,22 +264,21 @@ def _stop_loop():
 
         try:
             state = get_state()
-            if not state.positions:
-                continue
             pairs_needed = set(state.positions)
             for shadow in get_spot_shadows():
                 pairs_needed.update(shadow.positions)
             prices = {}
-            for pair in pairs_needed:
-                try:
-                    prices[pair] = get_price(pair)
-                except Exception as e:
-                    log.warning(f"[SPOT STOP-CHECK] {pair} price fetch failed: {e}")
-            if prices:
-                check_stops(prices)
-                for shadow in get_spot_shadows():
-                    shadow.check_stops(prices)
-                write_status_snapshot(prices)
+            if pairs_needed:
+                for pair in pairs_needed:
+                    try:
+                        prices[pair] = get_price(pair)
+                    except Exception as e:
+                        log.warning(f"[SPOT STOP-CHECK] {pair} price fetch failed: {e}")
+                if prices:
+                    check_stops(prices)
+                    for shadow in get_spot_shadows():
+                        shadow.check_stops(prices)
+            write_status_snapshot(prices or None)
         except Exception as e:
             log.error(f"[SPOT STOP-CHECK] {e}", exc_info=True)
 
