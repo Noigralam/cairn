@@ -1706,6 +1706,190 @@ def run_scored_shadow(
     return trades, balance
 
 
+# ---------------------------------------------------------------------------
+# Scored shadow sweep helpers
+# ---------------------------------------------------------------------------
+
+_EXIT_SHORT_SCORED = {
+    "take_profit":    "TP",
+    "trailing_stop":  "trail",
+    "signal":         "RSI",
+    "hard_stop":      "hard",
+    "time_stop":      "time",
+    "end_of_data":    "eod",
+}
+
+
+def _run_scored_sweep(
+    days_list: list[int],
+    title: str,
+    scenarios: list[dict],
+    pairs: list[str],
+    base_kwargs: dict,
+    description: str = "",
+):
+    """Run one scored-shadow parameter sweep across all scenarios and day windows."""
+    start    = float(base_kwargs.get("_start", config.SPOT_SIMULATION_BALANCE))
+    interval = base_kwargs.get("interval", INTERVAL)
+    bk = {k: v for k, v in base_kwargs.items() if not k.startswith("_")}
+    W = 130
+
+    for days in days_list:
+        _header(days, title, wide=True)
+        print(f"  {'Scenario':<38}  {'true%':>7}  {'real%':>7}  {'n':>4}  {'W/L':<7}  "
+              f"{'PnL':>8}  {'avg':>6}  {'worst':>7}  exits")
+        print(f"  {'─'*38}  {'─'*7}  {'─'*7}  {'─'*4}  {'─'*7}  "
+              f"{'─'*8}  {'─'*6}  {'─'*7}  {'─'*28}")
+
+        df_map = {p: fetch(p, days, interval=interval) for p in pairs}
+        rows = []
+        for s in scenarios:
+            label  = s.get("label", "")
+            kwargs = {**bk, **{k: v for k, v in s.items() if k != "label"}}
+            trades, final = run_scored_shadow(pairs, df_map, start, **kwargs)
+            realized  = [t for t in trades if t.exit_reason != "end_of_data"]
+            true_ret  = (final - start) / start * 100
+            real_pnl  = sum(t.pnl for t in realized)
+            real_ret  = real_pnl / start * 100
+            wins      = sum(1 for t in realized if t.pnl > 0)
+            n         = len(realized)
+            avg       = real_pnl / n if n else 0
+            worst     = min((t.pnl for t in realized), default=0.0)
+            ec: dict[str, int] = {}
+            for t in realized:
+                ec[t.exit_reason] = ec.get(t.exit_reason, 0) + 1
+            exits_str = "  ".join(
+                f"{_EXIT_SHORT_SCORED.get(r, r)}×{c}" for r, c in sorted(ec.items())
+            )
+            rows.append((true_ret, label, real_ret, n, wins, real_pnl, avg, worst, exits_str))
+
+        rows.sort(key=lambda x: x[0], reverse=True)
+        for i, (tr, lbl, rr, n, wins, pnl, avg, worst, exits) in enumerate(rows):
+            marker = "  ◄ best" if i == 0 else ""
+            print(f"  {lbl:<38}  {tr:>+6.2f}%  {rr:>+6.2f}%  {n:>4}  "
+                  f"{wins}/{n-wins:<5}  {pnl:>+8.2f}  {avg:>+6.2f}  {worst:>+7.2f}  {exits}{marker}")
+        print()
+    if description:
+        print(f"  {description.strip()}")
+        print()
+
+
+def sweep_scored_all(pairs: list[str], days_list: list[int], shadow_name: str = ""):
+    """Run all parameter sweeps for scored (multi-pair single-position) mode."""
+    base_ov  = config.get_shadow_overrides(shadow_name) if shadow_name else {}
+    start    = float(base_ov.get("spot_balance", config.SPOT_SIMULATION_BALANCE))
+    interval = base_ov.get("interval", INTERVAL)
+    SR       = _SWEEP_RANGES
+
+    base_kw = dict(
+        rsi_buy      = base_ov.get("spot_rsi_oversold",          config.SPOT_RSI_OVERSOLD),
+        rsi_sell     = base_ov.get("spot_rsi_overbought",        config.SPOT_RSI_OVERBOUGHT),
+        rsi_period   = base_ov.get("spot_rsi_period",            config.SPOT_RSI_PERIOD),
+        tp_pct       = base_ov.get("spot_take_profit_pct",       config.SPOT_TAKE_PROFIT_PCT),
+        trail_pct    = base_ov.get("spot_trailing_stop_pct",     config.SPOT_TRAILING_STOP_PCT),
+        floor_pct    = base_ov.get("spot_profit_floor_pct",      config.SPOT_PROFIT_FLOOR_PCT),
+        min_exit     = base_ov.get("spot_min_exit_profit_pct",   config.SPOT_MIN_EXIT_PROFIT_PCT),
+        ema_gap      = base_ov.get("spot_ema_gap_pct",           config.SPOT_EMA_GAP_PCT),
+        time_stop_days = base_ov.get("spot_time_stop_days",      config.SPOT_TIME_STOP_DAYS),
+        hard_stop    = base_ov.get("spot_hard_stop_pct",         config.SPOT_HARD_STOP_PCT),
+        stop_cooldown  = base_ov.get("spot_stop_cooldown_candles", config.SPOT_STOP_COOLDOWN_CANDLES),
+        drop_period  = base_ov.get("spot_score_drop_period",     10),
+        vol_period   = base_ov.get("spot_score_vol_period",      20),
+        w_rsi        = base_ov.get("spot_score_rsi_weight",      0.5),
+        w_vol        = base_ov.get("spot_score_vol_weight",      0.25),
+        w_drop       = base_ov.get("spot_score_drop_weight",     0.25),
+        w_ema        = base_ov.get("spot_score_ema_weight",      0.0),
+        interval     = interval,
+        _start       = start,
+    )
+
+    label = shadow_name or "+".join(pairs)
+
+    # ── 1. Buy RSI threshold ──────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Buy RSI sweep — {label}",
+        [dict(rsi_buy=v, label=f"buy<{v}") for v in SR["rsi_buy"]],
+        pairs, base_kw,
+        description="buy<N  Enter only when RSI drops below N.  Lower = fewer, deeper entries.",
+    )
+
+    # ── 2. RSI sell threshold + take-profit ───────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Sell RSI + TP sweep — {label}",
+        ([dict(rsi_sell=v, label=f"sell>{v}") for v in SR["rsi_sell"]] +
+         [dict(tp_pct=v,   label=f"TP={v*100:.0f}%") for v in SR["tp_pct"]]),
+        pairs, base_kw,
+        description="sell>N  Exit when RSI exceeds N (also needs min_exit).  TP  Hard take-profit %.",
+    )
+
+    # ── 3. Trailing stop ─────────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Trailing stop sweep — {label}",
+        [dict(trail_pct=v, label=f"trail={v*100:.1f}%") for v in SR["trail_pct"]],
+        pairs, base_kw,
+        description="trail  Drop % from peak before trailing stop fires (once floor is cleared).",
+    )
+
+    # ── 4. Profit floor ──────────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Profit floor sweep — {label}",
+        [dict(floor_pct=v, label=f"floor={v*100:.1f}%") for v in SR["floor_pct"]],
+        pairs, base_kw,
+        description="floor  Min unrealised gain before trailing stop can fire.",
+    )
+
+    # ── 5. Min exit profit ───────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Min exit sweep — {label}",
+        [dict(min_exit=v, label=f"min_exit={v*100:.1f}%") for v in SR["min_exit"]],
+        pairs, base_kw,
+        description="min_exit  RSI sell signal only fires when unrealised gain >= this.",
+    )
+
+    # ── 6. Hard stop ─────────────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Hard stop sweep — {label}",
+        [dict(hard_stop=v, label=f"hard={v*100:.0f}%") for v in SR["hard_stop"]],
+        pairs, base_kw,
+        description="hard  Max loss before position is force-closed.  0 = disabled.",
+    )
+
+    # ── 7. Time stop ─────────────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Time stop sweep — {label}",
+        [dict(time_stop_days=v, label=f"time_stop={v}d") for v in SR["time_stop_days"]],
+        pairs, base_kw,
+        description="time_stop  Force-close after N days if no profit floor reached.  0 = disabled.",
+    )
+
+    # ── 8. EMA gap filter ────────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] EMA gap sweep — {label}",
+        [dict(ema_gap=v, label=f"ema_gap={v*100:.1f}%") for v in SR["ema_gap"]],
+        pairs, base_kw,
+        description="ema_gap  Require price > EMA × (1 + gap) before entry.  0 = disabled.",
+    )
+
+    # ── 9. Score: drop period ─────────────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Score drop period sweep — {label}",
+        [dict(drop_period=v, label=f"drop_period={v}") for v in [3, 5, 7, 10, 14, 20, 30]],
+        pairs, base_kw,
+        description="drop_period  Candle window for 'price drop from high' scoring component.",
+    )
+
+    # ── 10. Score: volume MA period ───────────────────────────────────────
+    _run_scored_sweep(
+        days_list, f"[scored] Score vol period sweep — {label}",
+        [dict(vol_period=v, label=f"vol_period={v}") for v in [5, 10, 14, 20, 30, 50]],
+        pairs, base_kw,
+        description="vol_period  Rolling window for volume MA used in volume-surge scoring.",
+    )
+
+    # ── 11. Score weights ─────────────────────────────────────────────────
+    sweep_score_weights(pairs, days_list, shadow_name=shadow_name)
+
+
 def sweep_score_weights(pairs: list[str], days_list: list[int], shadow_name: str = ""):
     """Sweep all scoring weight combinations (rsi, vol, drop summing to 1.0, step=0.1)."""
     base_ov = config.get_shadow_overrides(shadow_name) if shadow_name else {}
@@ -2102,6 +2286,111 @@ if __name__ == "__main__":
             _tee.close()
             print(f"Unknown sweep '{mode}'. Options: {', '.join(sweeps)}, all")
             sys.exit(1)
+        _tee.close()
+    elif str_args and str_args[0] == "sweep_scored":
+        # python backtest.py sweep_scored PAIR1,PAIR2,... [days...] [--cached]
+        target    = str_args[1] if len(str_args) > 1 else ""
+        days_list = day_args or [730, 365, 180]
+        shadow_name = ""
+        if target in config.get_shadow_profiles():
+            shadow_name = target
+            ov = config.get_shadow_overrides(target)
+            pairs = ov.get("pairs", config.SPOT_TRADING_PAIRS)
+        elif target:
+            pairs = [p.strip().upper() for p in target.split(",") if p.strip()]
+        else:
+            pairs = list(config.SPOT_TRADING_PAIRS)
+        label     = shadow_name or "+".join(pairs)
+        _days_str = "_".join(f"{d}d" for d in days_list)
+        _tee = _Tee(f"{RESULTS_DIR}/spot_sweep_scored_{label.replace('+','_')}_{_days_str}_{_date}.txt")
+        sweep_scored_all(pairs, days_list, shadow_name=shadow_name)
+        _tee.close()
+    elif str_args and str_args[0] == "scored":
+        # python backtest.py scored PAIR1,PAIR2,... [days...] [--cached] [--param=value ...]
+        # Inline overrides: --hard_stop=0.12  --tp_pct=0.06  --w_rsi=0.6  etc.
+        _float_overrides = {
+            "hard_stop", "tp_pct", "trail_pct", "floor_pct", "min_exit", "ema_gap",
+            "w_rsi", "w_vol", "w_drop", "w_ema", "time_stop_days",
+        }
+        _int_overrides = {"rsi_buy", "rsi_sell", "rsi_period", "drop_period", "vol_period", "stop_cooldown"}
+        inline_ov: dict = {}
+        clean_str_args = []
+        for a in str_args:
+            if a.startswith("--") and "=" in a:
+                k, v = a[2:].split("=", 1)
+                if k in _float_overrides:
+                    inline_ov[k] = float(v)
+                elif k in _int_overrides:
+                    inline_ov[k] = int(v)
+            else:
+                clean_str_args.append(a)
+        str_args = clean_str_args
+        target    = str_args[1] if len(str_args) > 1 else ""
+        days_list = day_args or [365, 180]
+        shadow_name = ""
+        if target in config.get_shadow_profiles():
+            shadow_name = target
+            ov = config.get_shadow_overrides(target)
+            pairs = ov.get("pairs", config.SPOT_TRADING_PAIRS)
+        elif target:
+            pairs = [p.strip().upper() for p in target.split(",") if p.strip()]
+        else:
+            pairs = list(config.SPOT_TRADING_PAIRS)
+        base_ov = config.get_shadow_overrides(shadow_name) if shadow_name else {}
+        start   = float(base_ov.get("spot_balance", config.SPOT_SIMULATION_BALANCE))
+        interval = base_ov.get("interval", INTERVAL)
+        kwargs = dict(
+            rsi_buy      = base_ov.get("spot_rsi_oversold",          config.SPOT_RSI_OVERSOLD),
+            rsi_sell     = base_ov.get("spot_rsi_overbought",        config.SPOT_RSI_OVERBOUGHT),
+            rsi_period   = base_ov.get("spot_rsi_period",            config.SPOT_RSI_PERIOD),
+            tp_pct       = base_ov.get("spot_take_profit_pct",       config.SPOT_TAKE_PROFIT_PCT),
+            trail_pct    = base_ov.get("spot_trailing_stop_pct",     config.SPOT_TRAILING_STOP_PCT),
+            floor_pct    = base_ov.get("spot_profit_floor_pct",      config.SPOT_PROFIT_FLOOR_PCT),
+            min_exit     = base_ov.get("spot_min_exit_profit_pct",   config.SPOT_MIN_EXIT_PROFIT_PCT),
+            ema_gap      = base_ov.get("spot_ema_gap_pct",           config.SPOT_EMA_GAP_PCT),
+            time_stop_days = base_ov.get("spot_time_stop_days",      config.SPOT_TIME_STOP_DAYS),
+            hard_stop    = base_ov.get("spot_hard_stop_pct",         config.SPOT_HARD_STOP_PCT),
+            stop_cooldown  = base_ov.get("spot_stop_cooldown_candles", config.SPOT_STOP_COOLDOWN_CANDLES),
+            drop_period  = base_ov.get("spot_score_drop_period",     10),
+            vol_period   = base_ov.get("spot_score_vol_period",      20),
+            w_rsi        = base_ov.get("spot_score_rsi_weight",      0.5),
+            w_vol        = base_ov.get("spot_score_vol_weight",      0.25),
+            w_drop       = base_ov.get("spot_score_drop_weight",     0.25),
+            w_ema        = base_ov.get("spot_score_ema_weight",      0.0),
+            interval     = interval,
+        )
+        kwargs.update(inline_ov)
+        label     = shadow_name or "+".join(pairs)
+        _days_str = "_".join(f"{d}d" for d in days_list)
+        _tee = _Tee(f"{RESULTS_DIR}/spot_scored_{label.replace('+','_')}_{_days_str}_{_date}.txt")
+        for days in days_list:
+            _header(days, f"Scored shadow — {label}", wide=True)
+            df_map = {p: fetch(p, days, interval=interval) for p in pairs}
+            trades, final = run_scored_shadow(pairs, df_map, start, **kwargs)
+            realized   = [t for t in trades if t.exit_reason != "end_of_data"]
+            total_pnl  = sum(t.pnl for t in realized)
+            return_pct = total_pnl / start * 100
+            wins  = sum(1 for t in realized if t.pnl > 0)
+            losses = len(realized) - wins
+            win_rate = wins / len(realized) * 100 if realized else 0
+            all_trades = trades
+            open_t = [t for t in all_trades if t.exit_reason == "end_of_data"]
+            open_pnl = sum(t.pnl for t in open_t)
+            true_return = (final - start) / start * 100
+            exit_counts: dict[str, int] = {}
+            for t in realized:
+                exit_counts[t.exit_reason] = exit_counts.get(t.exit_reason, 0) + 1
+            exits_str = "  ".join(f"{r}×{c}" for r, c in sorted(exit_counts.items()))
+            worst = min((t.pnl for t in realized), default=0)
+            avg   = total_pnl / len(realized) if realized else 0
+            print(f"\n  Pairs:   {', '.join(pairs)}")
+            print(f"  Balance: {start:.2f} → {final:.2f}  (true return: {true_return:+.2f}%)")
+            print(f"  Realized PnL: {total_pnl:+.2f} ({return_pct:+.2f}%)  |  "
+                  f"Open at cutoff: {open_pnl:+.2f}  |  Avg/trade: {avg:+.2f}  |  Worst: {worst:+.2f}")
+            print(f"  Trades:  {len(realized)} closed  +  {len(open_t)} open  |  W/L: {wins}/{losses} ({win_rate:.0f}%)")
+            if exits_str:
+                print(f"  Exits:   {exits_str}")
+        print()
         _tee.close()
     elif str_args and str_args[0] == "score_sweep":
         # python backtest.py score_sweep SHADOW_NAME_OR_PAIRS [days...] [--cached]
