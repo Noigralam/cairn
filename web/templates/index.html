@@ -316,7 +316,7 @@
   }
   .bt-field { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
   .bt-field input, .bt-field select { background:var(--card); border:1px solid var(--border); border-radius:4px; color:var(--text); padding:5px 8px; font-size:13px; width:100%; box-sizing:border-box; }
-  .bt-field select option, #bt-sweep-param option, #bt-grid-param1 option, #bt-grid-param2 option { color: #000; background: #fff; }
+  .bt-field select option, #bt-sweep-param option, #bt-grid-param1 option, #bt-grid-param2 option, #sc-sweep-param option { color: #000; background: #fff; }
   .bt-action-btn { padding:6px 14px; background:var(--blue); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap; opacity:0.85; }
   .bt-action-btn:hover { opacity:1; }
   </style>
@@ -1150,7 +1150,7 @@
 
   <!-- ═══════════════════════════ BACKTEST TAB ══════════════════════════ -->
   <div id="tab-backtest" style="display:none">
-    <h2>Backtest</h2>
+    <h2>Single-pair backtest</h2>
 
     <!-- Shared: pair + period -->
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:10px">
@@ -1318,6 +1318,91 @@
       <h3 id="bt-sweep-title" style="font-size:14px;margin-bottom:12px"></h3>
       <div id="bt-sweep-content"></div>
     </div>
+    <h2 style="margin-top:32px">Scored multi-pair backtest</h2>
+
+    <!-- Scored: shared pairs + time spans -->
+    <div class="bt-field" style="margin-bottom:10px"><span>Pairs</span>
+      <div id="sc-pairs-wrap" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
+        {% for p in ["NEAREUR","SOLEUR","ICPEUR","LTCEUR","ETHEUR","DOTEUR","BNBEUR","XRPEUR"] %}
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="checkbox" class="sc-pair-cb" value="{{ p }}"{% if p in ["NEAREUR","SOLEUR","ICPEUR","LTCEUR"] %} checked{% endif %}> {{ p }}
+        </label>
+        {% endfor %}
+        <input id="sc-pairs-custom" type="text" placeholder="other, comma-separated" style="width:200px;background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:5px 8px;font-size:13px">
+      </div>
+    </div>
+    <div class="bt-field" style="margin-bottom:20px"><span>Time spans</span>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" class="sc-days-cb" value="90"> 90d</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" class="sc-days-cb" value="180"> 180d</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" class="sc-days-cb" value="365" checked> 365d</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" class="sc-days-cb" value="730"> 730d</label>
+      </div>
+    </div>
+
+    <!-- Scored: single run -->
+    <div style="border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em">Single run — fixed parameters</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px;margin-bottom:14px">
+        <label class="bt-field"><span>Start balance</span><input id="sc-start" type="number" value="{{ config.SPOT_SIMULATION_BALANCE }}" min="1" step="10"></label>
+        <label class="bt-field"><span>RSI period</span><input id="sc-rsi-period" type="number" value="{{ config.SPOT_RSI_PERIOD }}" min="2" max="50"></label>
+        <label class="bt-field"><span>RSI oversold</span><input id="sc-rsi-buy" type="number" value="38" min="1" max="50"></label>
+        <label class="bt-field"><span>RSI overbought</span><input id="sc-rsi-sell" type="number" value="85" min="50" max="99"></label>
+        <label class="bt-field"><span>Take profit %</span><input id="sc-tp" type="number" value="0" min="0" step="0.1" placeholder="0=off"></label>
+        <label class="bt-field"><span>Trailing stop %</span><input id="sc-trail" type="number" value="0.5" min="0.1" step="0.1"></label>
+        <label class="bt-field"><span>Profit floor %</span><input id="sc-floor" type="number" value="0.5" min="0" step="0.1"></label>
+        <label class="bt-field"><span>Min exit %</span><input id="sc-min-exit" type="number" value="1.5" min="0" step="0.1"></label>
+        <label class="bt-field"><span>EMA gap % (0=off)</span><input id="sc-ema-gap" type="number" value="2.0" min="0" step="0.1"></label>
+        <label class="bt-field"><span>Hard stop % (0=off)</span><input id="sc-hard-stop" type="number" value="12" min="0" step="0.5"></label>
+        <label class="bt-field"><span>Time stop days (0=off)</span><input id="sc-time-stop" type="number" value="0" min="0" step="1"></label>
+        <label class="bt-field"><span>Stop cooldown (0=off)</span><input id="sc-stop-cooldown" type="number" value="0" min="0" step="1"></label>
+      </div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Scoring weights (RSI + Vol + Drop should sum to 1.0)</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label class="bt-field" style="min-width:100px"><span>RSI weight</span><input id="sc-w-rsi" type="number" value="0.5" min="0" max="1" step="0.05"></label>
+          <label class="bt-field" style="min-width:100px"><span>Vol weight</span><input id="sc-w-vol" type="number" value="0.25" min="0" max="1" step="0.05"></label>
+          <label class="bt-field" style="min-width:100px"><span>Drop weight</span><input id="sc-w-drop" type="number" value="0.25" min="0" max="1" step="0.05"></label>
+          <label class="bt-field" style="min-width:90px"><span>Drop period</span><input id="sc-drop-period" type="number" value="3" min="1" max="50" step="1"></label>
+          <label class="bt-field" style="min-width:90px"><span>Vol period</span><input id="sc-vol-period" type="number" value="30" min="1" max="100" step="1"></label>
+        </div>
+      </div>
+      <button id="sc-run-btn" onclick="runScoredBacktest()" style="padding:8px 24px;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Run scored backtest</button>
+      <span id="sc-status" style="margin-left:12px;color:var(--muted);font-size:13px"></span>
+    </div>
+
+    <!-- Scored: sweep -->
+    <div style="border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em">Sweep</div>
+      <div style="display:grid;grid-template-columns:80px 1fr;gap:8px 12px;align-items:center">
+        <span style="font-size:12px;color:var(--muted)">Single axis</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <select id="sc-sweep-param" style="background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:5px 8px;font-size:13px">
+            <option value="rsi_buy">RSI oversold</option>
+            <option value="rsi_sell">RSI overbought</option>
+            <option value="tp_pct">Take profit %</option>
+            <option value="trail_pct">Trailing stop %</option>
+            <option value="floor_pct">Profit floor %</option>
+            <option value="min_exit">Min exit %</option>
+            <option value="ema_gap">EMA gap %</option>
+            <option value="hard_stop">Hard stop %</option>
+            <option value="time_stop_days">Time stop (days)</option>
+            <option value="stop_cooldown">Stop cooldown</option>
+          </select>
+          <button onclick="runScoredSweep()" class="bt-action-btn">Sweep param</button>
+        </div>
+        <span style="font-size:12px;color:var(--muted)">Weights</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="runScoredWeightSweep()" class="bt-action-btn">Weight sweep</button>
+          <span style="font-size:11px;color:var(--muted);opacity:0.7">66 combos of RSI/Vol/Drop weights — runs windows sequentially</span>
+        </div>
+      </div>
+      <div style="margin-top:10px"><span id="sc-sweep-status" style="color:var(--muted);font-size:12px"></span></div>
+    </div>
+
+    <!-- Scored results -->
+    <div id="sc-results" style="display:none;margin-top:4px"></div>
+
   </div><!-- /tab-backtest -->
 
   <!-- ═══════════════════════ SHARED: ACTIVITY LOG ══════════════════════ -->
@@ -4557,6 +4642,254 @@
   setInterval(refreshFutures, 30000);
   setInterval(refreshFuturesSignals, 60000);
   setInterval(refreshFuturesShadows, 60000);
+
+  // ── Scored backtest ───────────────────────────────────────────────────────
+
+  async function runScoredBacktest() {
+    const btn    = document.getElementById('sc-run-btn');
+    const status = document.getElementById('sc-status');
+    const out    = document.getElementById('sc-results');
+    const base   = _scBasePayload();
+    if (!base.pairs?.length) { status.textContent = 'Select at least one pair.'; return; }
+    const days = [...document.querySelectorAll('.sc-days-cb:checked')].map(cb => parseInt(cb.value));
+    if (!days.length) { status.textContent = 'Select at least one time span.'; return; }
+
+    btn.disabled = true;
+    status.textContent = `Running ${days.join('/')}d…`;
+    out.style.display = 'none';
+
+    const h = {'Content-Type': 'application/json'};
+    if (_pinEnabled) h['X-Dashboard-Pin'] = sessionStorage.getItem('cairn_pin') || '';
+
+    try {
+      const jobs = await Promise.all(days.map(async d => {
+        const r = await fetch('/api/backtest/scored', {method:'POST', headers:h, body: JSON.stringify({...base, days: d})});
+        const {job_id} = await r.json();
+        return {days: d, result: await _scPollJob(job_id)};
+      }));
+      renderScoredResults(jobs);
+      status.textContent = 'Done.';
+    } catch(e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderScoredResults(runs) {
+    const el = document.getElementById('sc-results');
+    el.style.display = '';
+
+    const cols = ['True return','Realized %','PnL','Open at cutoff','Trades','W/L','Win rate','Avg/trade','Best','Worst','Final bal'];
+    const rows = runs.map(({days, result: r}) => [
+      `${days}d`,
+      `<span style="color:${r.true_return_pct>=0?'var(--green)':'var(--red)'}">${r.true_return_pct>=0?'+':''}${r.true_return_pct.toFixed(2)}%</span>`,
+      `<span style="color:${r.return_pct>=0?'var(--green)':'var(--red)'}">${r.return_pct>=0?'+':''}${r.return_pct.toFixed(2)}%</span>`,
+      `<span style="color:${r.total_pnl>=0?'var(--green)':'var(--red)'}">${r.total_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.total_pnl.toFixed(2)}</span>`,
+      `<span style="color:${r.open_pnl>=0?'var(--green)':'var(--red)'}">${r.open_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.open_pnl.toFixed(2)}</span>`,
+      r.trades + (r.open_positions ? ` +${r.open_positions}` : ''),
+      `${r.wins}/${r.losses}`,
+      r.trades ? r.win_rate+'%' : '—',
+      `<span style="color:${r.avg_pnl>=0?'var(--green)':'var(--red)'}">${r.avg_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.avg_pnl.toFixed(2)}</span>`,
+      `<span style="color:var(--green)">+${CURRENCY_SYMBOL}${r.best.toFixed(2)}</span>`,
+      `<span style="color:var(--red)">${r.worst.toFixed(2)}</span>`,
+      `<span style="color:${r.final_balance>=r.start?'var(--green)':'var(--red)'}">${CURRENCY_SYMBOL}${r.final_balance.toFixed(2)}</span>`,
+    ]);
+
+    // exit reasons from last run
+    const lastReasons = runs[runs.length - 1]?.result?.exit_reasons || {};
+    const _exitLabel = {trailing_stop:'Trail',take_profit:'TP',signal:'RSI',hard_stop:'Hard stop',time_stop:'Time stop',end_of_data:'Cutoff'};
+    const reasonStr = Object.entries(lastReasons).map(([k,v]) => `${_exitLabel[k]||k} ×${v}`).join('  ·  ');
+
+    // trade list from first run
+    const trades = runs[0]?.result?.trade_list || [];
+    const tradeRows = trades.map((t,i) => `<tr>
+      <td>${i+1}</td>
+      <td style="color:${t.pnl>=0?'var(--green)':'var(--red)'}">${t.pnl>=0?'+':''}${CURRENCY_SYMBOL}${t.pnl.toFixed(2)}</td>
+      <td style="color:var(--muted)">-${CURRENCY_SYMBOL}${t.fees.toFixed(4)}</td>
+      <td>${_exitLabel[t.exit_reason]||t.exit_reason}</td>
+    </tr>`).join('');
+
+    el.innerHTML = `
+      <div class="tbl-wrap" style="margin-bottom:16px"><table class="data-tbl">
+        <thead><tr><th>Period</th>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>
+      ${reasonStr ? `<div style="font-size:12px;color:var(--muted);margin-bottom:16px">Exit reasons (last window): ${reasonStr}</div>` : ''}
+      ${trades.length ? `<h3 style="font-size:14px;margin-bottom:8px">Trades (first window)</h3>
+      <div class="tbl-wrap"><table class="data-tbl">
+        <thead><tr><th>#</th><th>PnL</th><th>Fees</th><th>Exit</th></tr></thead>
+        <tbody>${tradeRows}</tbody>
+      </table></div>` : ''}
+    `;
+  }
+
+  function _scBasePayload() {
+    const checkedPairs = [...document.querySelectorAll('.sc-pair-cb:checked')].map(cb => cb.value);
+    const custom = (document.getElementById('sc-pairs-custom').value || '').split(',')
+                    .map(p => p.trim().toUpperCase()).filter(Boolean);
+    const pairs = [...new Set([...checkedPairs, ...custom])];
+    const pct = v => parseFloat(v) / 100;
+    const num = (id, cast) => { const v = document.getElementById(id).value; return v ? cast(v) : undefined; };
+    const base = {
+      pairs,
+      start:        parseFloat(document.getElementById('sc-start').value),
+      rsi_period:   num('sc-rsi-period', parseInt),
+      rsi_buy:      num('sc-rsi-buy',    parseInt),
+      rsi_sell:     num('sc-rsi-sell',   parseInt),
+      tp_pct:       pct(document.getElementById('sc-tp').value)       || undefined,
+      trail_pct:    pct(document.getElementById('sc-trail').value)    || undefined,
+      floor_pct:    pct(document.getElementById('sc-floor').value)    || undefined,
+      min_exit:     pct(document.getElementById('sc-min-exit').value) || undefined,
+      ema_gap:      pct(document.getElementById('sc-ema-gap').value)  || undefined,
+      hard_stop:    pct(document.getElementById('sc-hard-stop').value)|| undefined,
+      time_stop_days: num('sc-time-stop',    parseFloat) || undefined,
+      stop_cooldown:  num('sc-stop-cooldown', parseInt)  || undefined,
+      w_rsi:        num('sc-w-rsi',  parseFloat),
+      w_vol:        num('sc-w-vol',  parseFloat),
+      w_drop:       num('sc-w-drop', parseFloat),
+      drop_period:  num('sc-drop-period', parseInt),
+      vol_period:   num('sc-vol-period',  parseInt),
+    };
+    Object.keys(base).forEach(k => base[k] === undefined && delete base[k]);
+    return base;
+  }
+
+  async function _scPollJob(jobId) {
+    while (true) {
+      await new Promise(res => setTimeout(res, 900));
+      const s = await (await fetch(`/api/backtest/${jobId}`)).json();
+      if (s.status === 'done')  return s.result;
+      if (s.status === 'error') throw new Error(s.error);
+    }
+  }
+
+  async function runScoredSweep() {
+    const status = document.getElementById('sc-sweep-status');
+    const out    = document.getElementById('sc-results');
+    const sweepParam = document.getElementById('sc-sweep-param').value;
+    const days   = [...document.querySelectorAll('.sc-days-cb:checked')].map(cb => parseInt(cb.value));
+    if (!days.length) { status.textContent = 'Select at least one time span.'; return; }
+    const base = _scBasePayload();
+    if (!base.pairs?.length) { status.textContent = 'Select at least one pair.'; return; }
+
+    const h = {'Content-Type': 'application/json'};
+    if (_pinEnabled) h['X-Dashboard-Pin'] = sessionStorage.getItem('cairn_pin') || '';
+
+    status.textContent = `Sweeping ${sweepParam} ${days.join('/')}d…`;
+    out.style.display = 'none';
+
+    try {
+      const allResults = await Promise.all(days.map(async d => {
+        const r = await fetch('/api/backtest/scored/sweep', {method:'POST', headers:h, body: JSON.stringify({...base, days: d, sweep_param: sweepParam})});
+        const {job_id} = await r.json();
+        return {days: d, rows: await _scPollJob(job_id)};
+      }));
+      renderScoredSweepResults(allResults, sweepParam);
+      status.textContent = 'Done.';
+    } catch(e) {
+      status.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runScoredWeightSweep() {
+    const status = document.getElementById('sc-sweep-status');
+    const out    = document.getElementById('sc-results');
+    const days   = [...document.querySelectorAll('.sc-days-cb:checked')].map(cb => parseInt(cb.value));
+    if (!days.length) { status.textContent = 'Select at least one time span.'; return; }
+    const base = _scBasePayload();
+    if (!base.pairs?.length) { status.textContent = 'Select at least one pair.'; return; }
+
+    const h = {'Content-Type': 'application/json'};
+    if (_pinEnabled) h['X-Dashboard-Pin'] = sessionStorage.getItem('cairn_pin') || '';
+
+    status.textContent = `Weight sweep ${days.join('/')}d (66 combos)…`;
+    out.style.display = 'none';
+
+    try {
+      // run windows sequentially to avoid hammering — weight sweep is CPU-heavy
+      const allResults = [];
+      for (const d of days) {
+        const r = await fetch('/api/backtest/scored/weightsweep', {method:'POST', headers:h, body: JSON.stringify({...base, days: d})});
+        const {job_id} = await r.json();
+        allResults.push({days: d, rows: await _scPollJob(job_id)});
+        status.textContent = `${d}d done, continuing…`;
+      }
+      renderScoredWeightResults(allResults);
+      status.textContent = 'Done.';
+    } catch(e) {
+      status.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  const _SC_EXIT = {trailing_stop:'Trail',take_profit:'TP',signal:'RSI',hard_stop:'Hard',time_stop:'Time',end_of_data:'Cutoff'};
+
+  function _scExitStr(reasons) {
+    return Object.entries(reasons||{}).map(([k,v])=>`${_SC_EXIT[k]||k}×${v}`).join(' ');
+  }
+
+  function renderScoredSweepResults(allResults, sweepParam) {
+    const out = document.getElementById('sc-results');
+    out.style.display = '';
+    const pctParams = new Set(['tp_pct','trail_pct','floor_pct','min_exit','ema_gap','hard_stop']);
+    const fmtVal = v => pctParams.has(sweepParam) ? (v*100).toFixed(1)+'%' : String(v);
+
+    let html = '';
+    for (const {days, rows} of allResults) {
+      html += `<div style="font-size:13px;font-weight:600;margin-bottom:6px">${days}d — ${sweepParam} sweep</div>`;
+      html += `<div class="tbl-wrap" style="margin-bottom:18px"><table class="data-tbl"><thead><tr>
+        <th>Value</th><th>True%</th><th>Real%</th><th>PnL</th><th>Open</th><th>Trades</th><th>W/L</th><th>Avg</th><th>Worst</th><th>Exits</th>
+      </tr></thead><tbody>`;
+      rows.forEach((r, i) => {
+        const best = i === 0 ? ' style="background:rgba(48,161,78,0.08)"' : '';
+        html += `<tr${best}>
+          <td>${fmtVal(r.swept_value)}${i===0?' ◄':''}</td>
+          <td style="color:${r.true_return_pct>=0?'var(--green)':'var(--red)'}">${r.true_return_pct>=0?'+':''}${r.true_return_pct.toFixed(2)}%</td>
+          <td style="color:${r.return_pct>=0?'var(--green)':'var(--red)'}">${r.return_pct>=0?'+':''}${r.return_pct.toFixed(2)}%</td>
+          <td style="color:${r.total_pnl>=0?'var(--green)':'var(--red)'}">${r.total_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.total_pnl.toFixed(2)}</td>
+          <td style="color:${r.open_pnl>=0?'var(--green)':'var(--red)'}">${r.open_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.open_pnl.toFixed(2)}</td>
+          <td>${r.trades}${r.open_positions?` +${r.open_positions}`:''}</td>
+          <td>${r.wins}/${r.losses}</td>
+          <td style="color:${r.avg_pnl>=0?'var(--green)':'var(--red)'}">${r.avg_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.avg_pnl.toFixed(2)}</td>
+          <td style="color:var(--red)">${r.worst.toFixed(2)}</td>
+          <td style="font-size:11px;color:var(--muted)">${_scExitStr(r.exit_reasons)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    out.innerHTML = html;
+  }
+
+  function renderScoredWeightResults(allResults) {
+    const out = document.getElementById('sc-results');
+    out.style.display = '';
+    let html = '';
+    for (const {days, rows} of allResults) {
+      html += `<div style="font-size:13px;font-weight:600;margin-bottom:6px">${days}d — score weight sweep (${rows.length} combos)</div>`;
+      html += `<div class="tbl-wrap" style="margin-bottom:18px"><table class="data-tbl"><thead><tr>
+        <th>RSI w</th><th>Vol w</th><th>Drop w</th><th>True%</th><th>Real%</th><th>PnL</th><th>Open</th><th>Trades</th><th>W/L</th><th>Avg</th><th>Worst</th><th>Exits</th>
+      </tr></thead><tbody>`;
+      rows.forEach((r, i) => {
+        const best = i === 0 ? ' style="background:rgba(48,161,78,0.08)"' : '';
+        html += `<tr${best}>
+          <td>${r.w_rsi.toFixed(1)}${i===0?' ◄':''}</td>
+          <td>${r.w_vol.toFixed(1)}</td>
+          <td>${r.w_drop.toFixed(1)}</td>
+          <td style="color:${r.true_return_pct>=0?'var(--green)':'var(--red)'}">${r.true_return_pct>=0?'+':''}${r.true_return_pct.toFixed(2)}%</td>
+          <td style="color:${r.return_pct>=0?'var(--green)':'var(--red)'}">${r.return_pct>=0?'+':''}${r.return_pct.toFixed(2)}%</td>
+          <td style="color:${r.total_pnl>=0?'var(--green)':'var(--red)'}">${r.total_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.total_pnl.toFixed(2)}</td>
+          <td style="color:${r.open_pnl>=0?'var(--green)':'var(--red)'}">${r.open_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.open_pnl.toFixed(2)}</td>
+          <td>${r.trades}${r.open_positions?` +${r.open_positions}`:''}</td>
+          <td>${r.wins}/${r.losses}</td>
+          <td style="color:${r.avg_pnl>=0?'var(--green)':'var(--red)'}">${r.avg_pnl>=0?'+':''}${CURRENCY_SYMBOL}${r.avg_pnl.toFixed(2)}</td>
+          <td style="color:var(--red)">${r.worst.toFixed(2)}</td>
+          <td style="font-size:11px;color:var(--muted)">${_scExitStr(r.exit_reasons)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    out.innerHTML = html;
+  }
 
   // ── Backtest ──────────────────────────────────────────────────────────────
   const _BT_EXIT_LABELS = {

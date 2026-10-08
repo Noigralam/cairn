@@ -1987,6 +1987,127 @@ def _trade_summary(pair: str, days: int, start: float, final_balance: float, tra
     }
 
 
+def api_scored_sweep_param(pairs: list[str], days: int, start: float,
+                           sweep_param: str, base_params: dict,
+                           interval: str = "15m") -> list[dict]:
+    """Sweep one parameter over its range using run_scored_shadow. Returns ranked list."""
+    with _bt_lock:
+        df_map = {p: fetch(p, days, interval) for p in pairs}
+    values = _sweep_ranges().get(sweep_param, [])
+    results = []
+    for v in values:
+        params = {**base_params, sweep_param: v}
+        trades, final = run_scored_shadow(pairs, df_map, start, interval=interval, **params)
+        closed   = [t for t in trades if t.exit_reason != "end_of_data"]
+        open_eod = [t for t in trades if t.exit_reason == "end_of_data"]
+        wins     = [t for t in closed if t.pnl > 0]
+        pnl      = sum(t.pnl for t in closed)
+        reasons: dict[str, int] = {}
+        for t in closed:
+            reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+        results.append({
+            "swept_param":     sweep_param,
+            "swept_value":     v,
+            "true_return_pct": round((final - start) / start * 100, 2) if start else 0,
+            "return_pct":      round(pnl / start * 100, 2) if start else 0,
+            "total_pnl":       round(pnl, 2),
+            "open_pnl":        round(sum(t.pnl for t in open_eod), 2),
+            "final_balance":   round(final, 2),
+            "trades":          len(closed),
+            "open_positions":  len(open_eod),
+            "wins":            len(wins),
+            "losses":          len(closed) - len(wins),
+            "win_rate":        round(len(wins) / len(closed) * 100, 1) if closed else 0,
+            "avg_pnl":         round(pnl / len(closed), 2) if closed else 0,
+            "worst":           round(min((t.pnl for t in closed), default=0), 2),
+            "exit_reasons":    reasons,
+        })
+    results.sort(key=lambda x: x["true_return_pct"], reverse=True)
+    return results
+
+
+def api_scored_weight_sweep(pairs: list[str], days: int, start: float,
+                            base_params: dict, interval: str = "15m") -> list[dict]:
+    """Sweep all 66 w_rsi/w_vol/w_drop combos using run_scored_shadow. Returns ranked list."""
+    with _bt_lock:
+        df_map = {p: fetch(p, days, interval) for p in pairs}
+    results = []
+    STEP = 10
+    kw = {k: v for k, v in base_params.items()
+          if k not in ("w_rsi", "w_vol", "w_drop", "w_ema")}
+    for r in range(STEP + 1):
+        for v in range(STEP + 1 - r):
+            d = STEP - r - v
+            wr, wv, wd = r / STEP, v / STEP, d / STEP
+            trades, final = run_scored_shadow(
+                pairs, df_map, start, interval=interval,
+                w_rsi=wr, w_vol=wv, w_drop=wd, w_ema=0.0, **kw
+            )
+            closed   = [t for t in trades if t.exit_reason != "end_of_data"]
+            open_eod = [t for t in trades if t.exit_reason == "end_of_data"]
+            wins     = [t for t in closed if t.pnl > 0]
+            pnl      = sum(t.pnl for t in closed)
+            reasons: dict[str, int] = {}
+            for t in closed:
+                reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+            results.append({
+                "w_rsi": wr, "w_vol": wv, "w_drop": wd,
+                "true_return_pct": round((final - start) / start * 100, 2) if start else 0,
+                "return_pct":      round(pnl / start * 100, 2) if start else 0,
+                "total_pnl":       round(pnl, 2),
+                "open_pnl":        round(sum(t.pnl for t in open_eod), 2),
+                "final_balance":   round(final, 2),
+                "trades":          len(closed),
+                "open_positions":  len(open_eod),
+                "wins":            len(wins),
+                "losses":          len(closed) - len(wins),
+                "win_rate":        round(len(wins) / len(closed) * 100, 1) if closed else 0,
+                "avg_pnl":         round(pnl / len(closed), 2) if closed else 0,
+                "worst":           round(min((t.pnl for t in closed), default=0), 2),
+                "exit_reasons":    reasons,
+            })
+    results.sort(key=lambda x: x["true_return_pct"], reverse=True)
+    return results
+
+
+def api_run_scored_backtest(pairs: list[str], days: int, start: float,
+                            interval: str = "15m", **kwargs) -> dict:
+    """Run a scored multi-pair backtest and return structured results for the dashboard API."""
+    with _bt_lock:
+        df_map = {p: fetch(p, days, interval) for p in pairs}
+    trades, final_balance = run_scored_shadow(pairs, df_map, start, interval=interval, **kwargs)
+    closed   = [t for t in trades if t.exit_reason != "end_of_data"]
+    open_eod = [t for t in trades if t.exit_reason == "end_of_data"]
+    wins     = [t for t in closed if t.pnl > 0]
+    total_pnl = sum(t.pnl for t in closed)
+    open_pnl  = sum(t.pnl for t in open_eod)
+    reasons: dict[str, int] = {}
+    for t in closed:
+        reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+    return {
+        "pairs":         pairs,
+        "days":          days,
+        "start":         round(start, 2),
+        "final_balance": round(final_balance, 2),
+        "true_return_pct": round((final_balance - start) / start * 100, 2) if start else 0,
+        "total_pnl":     round(total_pnl, 2),
+        "return_pct":    round(total_pnl / start * 100, 2) if start else 0,
+        "open_pnl":      round(open_pnl, 2),
+        "open_positions": len(open_eod),
+        "trades":        len(closed),
+        "wins":          len(wins),
+        "losses":        len(closed) - len(wins),
+        "win_rate":      round(len(wins) / len(closed) * 100, 1) if closed else 0,
+        "avg_pnl":       round(total_pnl / len(closed), 2) if closed else 0,
+        "best":          round(max((t.pnl for t in closed), default=0), 2),
+        "worst":         round(min((t.pnl for t in closed), default=0), 2),
+        "total_fees":    round(sum(t.fees for t in closed), 2),
+        "exit_reasons":  reasons,
+        "trade_list":    [{"pnl": round(t.pnl, 2), "fees": round(t.fees, 4),
+                           "exit_reason": t.exit_reason} for t in closed],
+    }
+
+
 def api_run_backtest(pair: str, days: int, start: float, interval: str = "15m", **kwargs) -> dict:
     """Run a single-pair backtest and return structured results for the dashboard API."""
     with _bt_lock:

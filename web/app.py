@@ -2189,6 +2189,163 @@ def api_backtest_run():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/api/backtest/scored", methods=["POST"])
+def api_backtest_scored():
+    data  = request.get_json(force=True) or {}
+    pairs = [p.strip().upper() for p in data.get("pairs", []) if p.strip()]
+    if not pairs:
+        return jsonify({"error": "pairs required"}), 400
+
+    days     = int(data.get("days", 365))
+    start    = float(data.get("start", config.SPOT_SIMULATION_BALANCE))
+    interval = data.get("interval", "15m")
+
+    def _v(key, cast): return cast(data[key]) if data.get(key) not in (None, "", 0, "0") else None
+    params = {k: v for k, v in {
+        "rsi_period":    _v("rsi_period",    int),
+        "rsi_buy":       _v("rsi_buy",       int),
+        "rsi_sell":      _v("rsi_sell",      int),
+        "tp_pct":        _v("tp_pct",        float),
+        "trail_pct":     _v("trail_pct",     float),
+        "floor_pct":     _v("floor_pct",     float),
+        "min_exit":      _v("min_exit",      float),
+        "ema_gap":       _v("ema_gap",       float),
+        "hard_stop":     _v("hard_stop",     float),
+        "time_stop_days":_v("time_stop_days",float),
+        "stop_cooldown": _v("stop_cooldown", int),
+        "w_rsi":         _v("w_rsi",         float),
+        "w_vol":         _v("w_vol",         float),
+        "w_drop":        _v("w_drop",        float),
+        "drop_period":   _v("drop_period",   int),
+        "vol_period":    _v("vol_period",    int),
+    }.items() if v is not None}
+
+    if len(_backtest_jobs) >= 20:
+        oldest = list(_backtest_jobs.keys())[:len(_backtest_jobs) - 19]
+        for k in oldest:
+            _backtest_jobs.pop(k, None)
+
+    job_id = str(uuid.uuid4())
+    _backtest_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run():
+        try:
+            from backtest import api_run_scored_backtest
+            result = api_run_scored_backtest(pairs, days, start, interval=interval, **params)
+            _backtest_jobs[job_id]["result"] = result
+            _backtest_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            _backtest_jobs[job_id]["error"]  = str(e)
+            _backtest_jobs[job_id]["status"] = "error"
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/backtest/scored/sweep", methods=["POST"])
+def api_backtest_scored_sweep():
+    data  = request.get_json(force=True) or {}
+    pairs = [p.strip().upper() for p in data.get("pairs", []) if p.strip()]
+    if not pairs:
+        return jsonify({"error": "pairs required"}), 400
+    sweep_param = data.get("sweep_param", "")
+    if not sweep_param:
+        return jsonify({"error": "sweep_param required"}), 400
+
+    days     = int(data.get("days", 365))
+    start    = float(data.get("start", config.SPOT_SIMULATION_BALANCE))
+    interval = data.get("interval", "15m")
+
+    def _v(key, cast): return cast(data[key]) if data.get(key) not in (None, "", 0, "0") else None
+    base_params = {k: v for k, v in {
+        "rsi_period":    _v("rsi_period",    int),
+        "rsi_buy":       _v("rsi_buy",       int),
+        "rsi_sell":      _v("rsi_sell",      int),
+        "tp_pct":        _v("tp_pct",        float),
+        "trail_pct":     _v("trail_pct",     float),
+        "floor_pct":     _v("floor_pct",     float),
+        "min_exit":      _v("min_exit",      float),
+        "ema_gap":       _v("ema_gap",       float),
+        "hard_stop":     _v("hard_stop",     float),
+        "time_stop_days":_v("time_stop_days",float),
+        "stop_cooldown": _v("stop_cooldown", int),
+        "w_rsi":         _v("w_rsi",         float),
+        "w_vol":         _v("w_vol",         float),
+        "w_drop":        _v("w_drop",        float),
+        "drop_period":   _v("drop_period",   int),
+        "vol_period":    _v("vol_period",    int),
+    }.items() if v is not None}
+
+    if len(_backtest_jobs) >= 20:
+        for k in list(_backtest_jobs.keys())[:len(_backtest_jobs) - 19]:
+            _backtest_jobs.pop(k, None)
+
+    job_id = str(uuid.uuid4())
+    _backtest_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run():
+        try:
+            from backtest import api_scored_sweep_param
+            result = api_scored_sweep_param(pairs, days, start, sweep_param, base_params, interval=interval)
+            _backtest_jobs[job_id]["result"] = result
+            _backtest_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            _backtest_jobs[job_id]["error"]  = str(e)
+            _backtest_jobs[job_id]["status"] = "error"
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/backtest/scored/weightsweep", methods=["POST"])
+def api_backtest_scored_weightsweep():
+    data  = request.get_json(force=True) or {}
+    pairs = [p.strip().upper() for p in data.get("pairs", []) if p.strip()]
+    if not pairs:
+        return jsonify({"error": "pairs required"}), 400
+
+    days     = int(data.get("days", 365))
+    start    = float(data.get("start", config.SPOT_SIMULATION_BALANCE))
+    interval = data.get("interval", "15m")
+
+    def _v(key, cast): return cast(data[key]) if data.get(key) not in (None, "", 0, "0") else None
+    base_params = {k: v for k, v in {
+        "rsi_period":    _v("rsi_period",    int),
+        "rsi_buy":       _v("rsi_buy",       int),
+        "rsi_sell":      _v("rsi_sell",      int),
+        "tp_pct":        _v("tp_pct",        float),
+        "trail_pct":     _v("trail_pct",     float),
+        "floor_pct":     _v("floor_pct",     float),
+        "min_exit":      _v("min_exit",      float),
+        "ema_gap":       _v("ema_gap",       float),
+        "hard_stop":     _v("hard_stop",     float),
+        "time_stop_days":_v("time_stop_days",float),
+        "stop_cooldown": _v("stop_cooldown", int),
+        "drop_period":   _v("drop_period",   int),
+        "vol_period":    _v("vol_period",    int),
+    }.items() if v is not None}
+
+    if len(_backtest_jobs) >= 20:
+        for k in list(_backtest_jobs.keys())[:len(_backtest_jobs) - 19]:
+            _backtest_jobs.pop(k, None)
+
+    job_id = str(uuid.uuid4())
+    _backtest_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run():
+        try:
+            from backtest import api_scored_weight_sweep
+            result = api_scored_weight_sweep(pairs, days, start, base_params, interval=interval)
+            _backtest_jobs[job_id]["result"] = result
+            _backtest_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            _backtest_jobs[job_id]["error"]  = str(e)
+            _backtest_jobs[job_id]["status"] = "error"
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
 @app.route("/api/backtest/<job_id>")
 def api_backtest_status(job_id):
     job = _backtest_jobs.get(job_id)

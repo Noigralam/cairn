@@ -156,6 +156,30 @@ It runs both ETHUSDT and SOLUSDT (same as MAIN) to keep the comparison clean.
 
 ---
 
+## Example 5 — Scored multi-pair backtest and sweep
+
+The scored strategy holds at most one position at a time across a set of pairs, entering the highest-scoring pair on each candle. `backtest.py scored` runs this against a fixed window; `backtest.py sweep_scored` sweeps one or all parameter axes.
+
+```bash
+# Single run: scored backtest on NEAR/SOL/ICP/LTC over 730, 365, and 180 days
+.venv/bin/python backtest.py scored 730 365 180 NEAREUR SOLEUR ICPEUR LTCEUR --cached
+
+# Override individual params inline
+.venv/bin/python backtest.py scored 730 NEAREUR SOLEUR ICPEUR LTCEUR --hard_stop=0.12 --cached
+
+# Sweep one axis across all three windows
+.venv/bin/python backtest.py sweep_scored rsi_buy 730 365 180 NEAREUR SOLEUR ICPEUR LTCEUR --cached
+
+# Sweep all axes (rsi_buy, rsi_sell, tp, trail, floor, min_exit, hard_stop, time_stop, ema_gap, drop_period, vol_period)
+.venv/bin/python backtest.py sweep_scored all 730 365 180 NEAREUR SOLEUR ICPEUR LTCEUR --cached
+```
+
+Output includes `true_return_pct` (return based on final balance, counting any open position at end-of-data price), `return_pct` (realised-only from closed trades), and `open_pnl` (unrealised P&L of any position still open at the last candle).
+
+To create a shadow from the best sweep result, add a `[spot.NAME]` section to `shadows.toml` with `type = "scored"` and the winning parameter values, then restart the engine.
+
+---
+
 ## Comparing all shadow profiles at once
 
 Once you've added a new shadow to `shadows.toml` and restarted the engine, run the full shadow comparison across multiple windows to see where it ranks:

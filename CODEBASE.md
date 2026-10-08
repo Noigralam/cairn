@@ -57,7 +57,9 @@ The spot trading loop. Two threads: the main loop (aligns to candle boundaries, 
 The largest file. Three things in one:
 1. `SimState` dataclass + `init()` / `_load()` / `_save()` — the main spot simulation state, persisted to `data/spot_state_{mode}.json`; written on first start so balance persists across restarts.
 2. `open_position()`, `close_position()`, `dca_position()`, `check_stops()` — the full spot trade execution logic used by both live and simulation modes.
-3. `SpotShadowSimulator` and `GridShadowSimulator` classes — each shadow has its own state file, parameter overrides, and `tick()` / `check_stops()` methods. `get_shadows()` lazy-inits from config on first call so the dashboard process can load shadow state without the engine running.
+3. `SpotShadowSimulator`, `GridShadowSimulator`, and `SpotScoredShadow` classes — each shadow has its own state file, parameter overrides, and `tick()` / `check_stops()` methods. `get_shadows()` lazy-inits from config on first call so the dashboard process can load shadow state without the engine running. `get_spot_shadows()` returns all shadow instances of every type.
+
+**`SpotScoredShadow`** — multi-pair scored shadow (set `type = "scored"` in `shadows.toml`). Evaluates all pairs in its `pairs` list on each candle using a composite score (RSI momentum + recent volume + recent price drop, weighted by `w_rsi`/`w_vol`/`w_drop`). Enters the highest-scoring pair when flat; holds at most one position at a time. `tick(candles_by_pair, prices)` dispatches per-pair candle DataFrames; `check_stops(prices)` calls the same stop-check logic as single-pair shadows. State is persisted to `data/spot_state_shadow_{name}.json` like all other shadows.
 
 ### `bot/futures_exchange.py` *(157 lines)*
 Binance USDT-M futures REST wrapper. `get_mark_price()`, `get_klines()`, `get_funding_rate()`, `get_next_funding_time()`, `get_usdt_balance()`, `set_leverage()`, `set_margin_type()`. In live mode, also `place_futures_order()` for real order execution.
@@ -79,7 +81,7 @@ Futures trading loop, same two-thread structure as spot: 15-minute signal loop a
 Empty — marks `web/` as a package.
 
 ### `web/app.py`
-The Flask dashboard. ~50 API endpoints covering: spot and futures status (read from JSON snapshots), trades, balance history, signals, charts (OHLCV + RSI + EMA200 + Bollinger Bands + actual trade markers), shadow profile status/trades/signals/charts, futures shadow ranking, FIFO tax summary/export/integrity/rebuild, Fear & Greed index, and recent log. Backtest API: `/api/backtest/run`, `/api/backtest/sweep`, `/api/backtest/fullsweep`, `/api/backtest/randomsearch`, `/api/backtest/2axissweep`, `/api/backtest/optimize` — all async (return a job_id, polled via `/api/backtest/<job_id>`). Shadow create/remove/restore endpoints write to `shadows.toml` (falling back to `.env` editing if `shadows.toml` does not exist). Archive endpoints expose the `archived_shadow_snapshots` table. Control endpoints (`/api/control`, `/api/futures/control`) return HTTP 503 when `CAIRN_DASHBOARD_ONLY=1`. PIN-gated actions use a lockout file to rate-limit brute force. Version badge reflects the running dashboard process (`__version__`), not the engine snapshot.
+The Flask dashboard. ~50 API endpoints covering: spot and futures status (read from JSON snapshots), trades, balance history, signals, charts (OHLCV + RSI + EMA200 + Bollinger Bands + actual trade markers), shadow profile status/trades/signals/charts, futures shadow ranking, FIFO tax summary/export/integrity/rebuild, Fear & Greed index, and recent log. Backtest API: `/api/backtest/run`, `/api/backtest/sweep`, `/api/backtest/fullsweep`, `/api/backtest/randomsearch`, `/api/backtest/2axissweep`, `/api/backtest/optimize` — single-pair, all async. Scored multi-pair API: `/api/backtest/scored`, `/api/backtest/scored/sweep`, `/api/backtest/scored/weightsweep` — also async, same job-id polling pattern via `/api/backtest/<job_id>`. Shadow create/remove/restore endpoints write to `shadows.toml` (falling back to `.env` editing if `shadows.toml` does not exist). Archive endpoints expose the `archived_shadow_snapshots` table. Control endpoints (`/api/control`, `/api/futures/control`) return HTTP 503 when `CAIRN_DASHBOARD_ONLY=1`. PIN-gated actions use a lockout file to rate-limit brute force. Version badge reflects the running dashboard process (`__version__`), not the engine snapshot.
 
 ---
 
@@ -93,9 +95,16 @@ Spot backtest engine and parameter sweep tool. Replays historical candles from t
 - **Random** — `backtest.py random N days…` samples N random combinations from all axes simultaneously; prints top 20 ranked by return. First integer is trial count, remaining integers are day windows.
 - **Grid** — `backtest.py grid param1 param2 days` tests all 12×12 combinations of two axes; prints a return-% matrix.
 - **Optimize** — `backtest.py optimize N days…` runs random search (N trials) then coordinate descent from the top 3 starting points, scoring by average return across all specified windows. Prints best params table and a `.env` snippet. May take 5–20 min. First integer is trial count.
+- **Scored** — `backtest.py scored days… pairs… [--param=value…]` runs `run_scored_shadow()` across the specified windows and pairs. Supports inline param overrides (e.g. `--hard_stop=0.12`). Reports `true_return_pct` (final balance including any open position), `return_pct` (realised only), and `open_pnl`.
+- **Sweep scored** — `backtest.py sweep_scored axis|all days… pairs…` sweeps one or all 11 scored-strategy axes (`rsi_buy`, `rsi_sell`, `tp`, `trail`, `floor`, `min_exit`, `hard_stop`, `time_stop`, `ema_gap`, `drop_period`, `vol_period`) plus a 66-combination weight sweep, ranked by `true_return_pct`. Implemented via `_run_scored_sweep()` and `sweep_scored_all()`.
 - **Topup** — monthly capital injection simulation.
 
 Results print as ranked tables with a footer legend. All output is mirrored to a descriptively-named file in `backtest_results/`. Sweep axis values live in `sweep_ranges.toml` — edit and rerun, no code change needed.
+
+**Dashboard API functions** (called by `web/app.py`):
+- `api_run_scored_backtest(pairs, days, params)` — single scored run; returns `true_return_pct`, `return_pct`, `open_pnl`, `open_positions`, trade stats.
+- `api_scored_sweep_param(pairs, days, axis, params)` — sweeps one axis; returns list of result dicts sorted by `true_return_pct`.
+- `api_scored_weight_sweep(pairs, days, params)` — sweeps all 66 weight combinations (`w_rsi`/`w_vol`/`w_drop` summing to 1.0 at 0.1 step); returns list sorted by `true_return_pct`.
 
 ### `backtest_futures.py` *(654 lines)*
 Futures backtest with isolated-margin accounting: models 0.05% taker fee, 0.01%/8h funding on open longs, and liquidation at `entry × (1 − 1/leverage + 0.5%)`. Sweeps: RSI thresholds, trailing stop, profit floor, take-profit, position size, DCA, and leverage. Also does shadow profile comparison ranked by return. Footer legend and output file mirroring identical to `backtest.py`.

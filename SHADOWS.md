@@ -6,6 +6,16 @@ All profiles run in real-time alongside the live bot from their creation date fo
 
 Shadow profiles are defined in **`shadows.toml`** in the repo root. Each profile gets a `[spot.<NAME>]` or `[futures.<NAME>]` section with its parameter overrides; omitted keys fall back to the live bot's defaults. The `[spot]` section lists which profiles are active via `profiles = [...]`.
 
+**Shadow types** — set `type` in the profile section to choose the strategy class:
+
+| `type` | Class | Description |
+|---|---|---|
+| *(omitted)* | `SpotShadowSimulator` | Default RSI single-pair strategy |
+| `"grid"` | `GridShadowSimulator` | Limit-order grid, no RSI |
+| `"scored"` | `SpotScoredShadow` | Multi-pair scored strategy — evaluates all `pairs` on each candle, enters the highest-scoring one; holds at most one position at a time |
+
+For `type = "scored"`, the `pairs` list must contain two or more pairs. Scoring weights are set with `w_rsi`, `w_vol`, and `w_drop` (default 0.5/0.3/0.2; must sum to 1.0). See `REFERENCE.md` for the full key list.
+
 If you are upgrading from an older installation that used `SPOT_SHADOW_*` environment variables in `.env`, run the migration script once:
 
 ```bash
@@ -210,6 +220,17 @@ The live bot currently trades **NEAREUR** with: RSI(7), buy<30, sell>75, trail=2
 **Type:** Grid — places limit orders at fixed spacing levels; not RSI-based.
 
 > 8 levels · 1.5% spacing
+
+---
+
+### SCORED_V1 *(scored multi-pair)*
+
+**Pairs:** NEAREUR, SOLEUR, ICPEUR, LTCEUR | **Balance:** seeded from live at creation  
+**Type:** Scored — on each candle all pairs are evaluated; the one with the highest composite score enters. Only one position is held at a time, so capital concentrates on the best opportunity rather than being spread across all pairs simultaneously.
+
+Scoring weights: RSI momentum (0.5) · recent volume (0.3) · recent price drop (0.2).
+
+> RSI(7) · buy<**38** · sell>**85** · Trail **0.5%** · Floor **0.5%** · Min exit **1.5%** · EMA gap **2%** · Hard stop **12%** · Score vol period **30** · Score drop period **3**
 
 ---
 
