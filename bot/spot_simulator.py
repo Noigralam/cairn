@@ -10,7 +10,7 @@ from .notifier import trade_alert, trailing_stop_alert, notify
 
 log = logging.getLogger("cryptobot")
 from .db import log_trade, log_balance, clear_shadow_trades
-from .spot_exchange import round_qty, get_min_notional, get_quote_balance, get_free_balance, place_order
+from .spot_exchange import round_qty, get_min_notional, get_quote_balance, get_free_balance, place_order, place_order_quote
 
 SPOT_FEE = config.SPOT_FEE
 # Reentrant so nested calls (e.g. check_stops → close_position) don't deadlock.
@@ -268,10 +268,9 @@ def _open_position_locked(pair: str, price: float, size_pct: float = None, price
         return
 
     if config.SPOT_MODE == "live":
-        amount = round_qty(pair, size / price)
         _write_pending(pair, "BUY", size)
         try:
-            order  = place_order(pair, "BUY", amount)
+            order  = place_order_quote(pair, "BUY", size)
             fills  = order.get("fills", [])
             if fills:
                 gross_qty = sum(float(f["qty"]) for f in fills)
@@ -283,6 +282,7 @@ def _open_position_locked(pair: str, price: float, size_pct: float = None, price
                 value     = gross_qty * avg_price  # actual EUR spent (gross)
             else:
                 avg_price = price
+                amount    = size / price
                 buy_fee   = amount * avg_price * SPOT_FEE
                 value     = amount * avg_price
             tp_price = avg_price * (1 + config.take_profit_for(pair))
@@ -331,10 +331,9 @@ def _manual_add_locked(pair: str, price: float, size_pct: float):
     buy_fee = size * SPOT_FEE
 
     if config.SPOT_MODE == "live":
-        amount = round_qty(pair, size / price)
         _write_pending(pair, "BUY", size)
         try:
-            order  = place_order(pair, "BUY", amount)
+            order  = place_order_quote(pair, "BUY", size)
             fills  = order.get("fills", [])
             if fills:
                 gross_qty = sum(float(f["qty"]) for f in fills)
@@ -346,6 +345,7 @@ def _manual_add_locked(pair: str, price: float, size_pct: float):
                 value     = gross_qty * avg_price
             else:
                 avg_price = price
+                amount    = size / price
                 buy_fee   = amount * avg_price * SPOT_FEE
                 value     = amount * avg_price
             if pair not in _state.positions:
@@ -422,10 +422,9 @@ def _dca_position_locked(pair: str, price: float, prices: dict | None = None):
         return
 
     if config.SPOT_MODE == "live":
-        amount = round_qty(pair, dca_value / price)
         _write_pending(pair, "DCA", dca_value)
         try:
-            order  = place_order(pair, "BUY", amount)
+            order  = place_order_quote(pair, "BUY", dca_value)
             fills  = order.get("fills", [])
             if fills:
                 gross_qty = sum(float(f["qty"]) for f in fills)
@@ -437,7 +436,7 @@ def _dca_position_locked(pair: str, price: float, prices: dict | None = None):
                 dca_value = gross_qty * avg_price
             else:
                 avg_price = price
-                bought    = amount
+                bought    = dca_value / price
                 buy_fee   = dca_value * SPOT_FEE
             log_trade(pair, "BUY", avg_price, bought, dca_value, buy_fee, mode="live", notes="dca")
             apply_dca(pos, avg_price, dca_value, tp_pct=config.take_profit_for(pair))

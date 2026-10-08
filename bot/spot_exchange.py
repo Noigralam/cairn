@@ -94,3 +94,15 @@ def place_order(pair: str, side: str, quantity: float) -> dict:
         type="MARKET",
         quantity=round_qty(pair, quantity),
     )
+
+
+def place_order_quote(pair: str, side: str, quote_qty: float) -> dict:
+    """MARKET order specifying spend amount in quote currency (EUR).
+    Use for BUY orders calculated as a fraction of balance — avoids
+    last-price vs ask-price mismatch that causes -2010 insufficient balance."""
+    return get_client().create_order(
+        symbol=pair,
+        side=side,
+        type="MARKET",
+        quoteOrderQty=round(quote_qty, 2),
+    )
