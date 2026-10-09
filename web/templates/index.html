@@ -781,7 +781,7 @@
     <section style="margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <h2 style="margin-bottom:0">Rankings</h2>
-        <button onclick="reloadShadows()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer;display:flex;align-items:center;gap:5px">↺ Reload shadows</button>
+        <button class="pin-gated{% if config.DASHBOARD_PIN %} pin-locked{% endif %}" onclick="reloadShadows()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer;display:flex;align-items:center;gap:5px">↺ Reload shadows</button>
       </div>
       <div class="tbl-wrap">
         <table id="sh-ranking-table">
@@ -963,7 +963,7 @@
             <h3 id="sh-archive-detail-title" style="margin:0"></h3>
             <div style="display:flex;gap:8px">
               <button onclick="copyArchiveEnv()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">Copy .env config</button>
-              <button onclick="restoreArchivedShadow()" style="background:none;border:1px solid #1f6feb;border-radius:5px;color:#58a6ff;font-size:12px;padding:3px 9px;cursor:pointer">Restore Shadow</button>
+              <button class="pin-gated" onclick="restoreArchivedShadow()" style="background:none;border:1px solid #1f6feb;border-radius:5px;color:#58a6ff;font-size:12px;padding:3px 9px;cursor:pointer">Restore Shadow</button>
               <button onclick="closeArchiveDetail()" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:12px;padding:3px 9px;cursor:pointer">✕ Close</button>
             </div>
           </div>
@@ -2532,8 +2532,8 @@
         ? `<span style="font-size:11px;background:var(--card);color:#d29922;padding:1px 6px;border-radius:3px;margin-right:6px">MAIN SIM</span>`
         : `<span style="font-size:11px;background:var(--card);color:#3fb950;padding:1px 6px;border-radius:3px;margin-right:6px">SPOT</span>`;
       const resetBtn  = s.is_main ? '' :
-        `<button onclick="resetShadow('${escHtml(s.name)}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;padding:2px 7px;cursor:pointer" title="Reset shadow">Reset</button>` +
-        `<button onclick="archiveRemoveShadow('${escHtml(s.name)}')" style="background:none;border:1px solid #6e2020;border-radius:4px;color:#f85149;font-size:11px;padding:2px 7px;cursor:pointer;margin-left:4px" title="Archive trades and permanently remove shadow">Archive &amp; Remove</button>`;
+        `<button class="pin-gated" onclick="resetShadow('${escHtml(s.name)}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;padding:2px 7px;cursor:pointer" title="Reset shadow">Reset</button>` +
+        `<button class="pin-gated" onclick="archiveRemoveShadow('${escHtml(s.name)}')" style="background:none;border:1px solid #6e2020;border-radius:4px;color:#f85149;font-size:11px;padding:2px 7px;cursor:pointer;margin-left:4px" title="Archive trades and permanently remove shadow">Archive &amp; Remove</button>`;
       return `<tr${s.is_main ? ' style="border-left:2px solid #d29922"' : ''}>
         <td style="color:var(--muted)">${i + 1}</td>
         <td>${badge}<span style="${nameStyle}" onclick="switchShadow('${escHtml(s.name)}')">${escHtml(s.name)}</span></td>
@@ -2546,6 +2546,7 @@
         <td>${resetBtn}</td>
       </tr>`;
     }).join('');
+    _applyLockState();
   }
 
   async function resetShadow(name) {
@@ -5579,6 +5580,7 @@ _initLock();
     _archiveTradesOffset = 0;
     document.getElementById('sh-archive-detail').style.display = '';
     document.getElementById('sh-archive-detail-title').textContent = name;
+    _applyLockState();
     document.getElementById('sh-archive-trades-tbody').innerHTML = '<tr><td colspan="7" class="empty">Loading…</td></tr>';
     document.getElementById('sh-archive-params').innerHTML = 'Loading…';
 
